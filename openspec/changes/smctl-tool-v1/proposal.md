@@ -49,30 +49,55 @@ Introduce **`smctl`** ("SmallAIOS control"), a unified CLI tool following the Un
 
 ## Impact
 
+### Repository Home
+
+`smctl` lives inside `SmallAIOS/ModelGate` as a Cargo workspace member. ModelGate is both the model gateway and the developer tooling hub for the SmallAIOS ecosystem.
+
 ### New Files
 
 ```
-smctl/
-├── Cargo.toml                  # Workspace root
-├── src/
-│   ├── main.rs                 # Entry point, clap dispatch
-│   └── lib.rs                  # Shared types and utilities
-├── smctl-workspace/            # Workspace management crate
-├── smctl-worktree/             # Git worktree operations crate
-├── smctl-flow/                 # Git flow branching crate
-├── smctl-spec/                 # OpenSpec workflow crate
-├── smctl-build/                # Build orchestration crate
-├── smctl-gate/                 # ModelGate operations crate
-├── smctl-release/              # Release management crate
-├── smctl-config/               # Configuration crate
-└── smctl-mcp/                  # MCP server crate (stdio + SSE transport)
+ModelGate/
+├── Cargo.toml                      # Workspace root (adds smctl members)
+├── smctl/
+│   ├── Cargo.toml                  # smctl binary crate
+│   └── src/
+│       ├── main.rs                 # Entry point, clap dispatch
+│       └── lib.rs                  # Shared types and utilities
+├── smctl-workspace/                # Workspace management crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-worktree/                 # Git worktree operations crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-flow/                     # Git flow branching crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-spec/                     # OpenSpec workflow crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-build/                    # Build orchestration crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-gate/                     # ModelGate operations crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-release/                  # Release management crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-config/                   # Configuration crate
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── smctl-mcp/                      # MCP server crate (stdio + SSE transport)
+│   ├── Cargo.toml
+│   └── src/lib.rs
+└── openspec/                       # OpenSpec documents (already present)
 ```
 
 ### Affected Repos
 
 | Repository | Impact |
 |---|---|
-| `SmallAIOS/ModelGate` | Home repo for smctl; adds openspec docs and initial CLI scaffolding |
+| `SmallAIOS/ModelGate` | **Home repo** — smctl binary + all smctl-* library crates live here |
 | `SmallAIOS/SmallAIOS` | Build targets consumed by `smctl build`; git flow conventions adopted |
 | Future SmallAIOS repos | Will integrate via `smctl workspace` registry |
 

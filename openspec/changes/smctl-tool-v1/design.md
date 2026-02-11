@@ -61,6 +61,7 @@ name = "ModelGate"
 url = "https://github.com/SmallAIOS/ModelGate"
 path = "modelgate"
 default_branch = "main"
+smctl_home = true                # smctl binary lives in this repo
 
 [flow]
 main_branch = "main"
@@ -304,6 +305,21 @@ For Cursor (`.cursor/mcp.json`):
 - MCP tools return structured JSON; CLI commands return human-readable output (same core logic, different formatters)
 - The `smctl serve` command starts the MCP server; all other commands run as normal CLI
 - Supports both `stdio` transport (for local tools like Claude Code) and `SSE` transport (for remote/web-based assistants)
+
+### Decision 11: smctl lives inside ModelGate
+
+**Choice:** `smctl` and all `smctl-*` library crates live as Cargo workspace members inside `SmallAIOS/ModelGate`, not in a separate repository.
+
+**Rationale:** ModelGate is the developer-facing control plane of the SmallAIOS ecosystem — it already handles model routing and gateway logic. Adding `smctl` here makes ModelGate the unified "tooling + gateway" repo. This avoids creating yet another repo (which would itself need smctl to manage), keeps the Cargo workspace cohesive, and lets `smctl-gate` directly share types with the ModelGate core library.
+
+**Trade-offs accepted:**
+- ModelGate repo grows in scope (gateway + CLI tooling) — mitigated by clear crate boundaries
+- `cargo install` from the repo installs both ModelGate and smctl — can be scoped with `--bin smctl`
+- If smctl outgrows ModelGate, it can be extracted to its own repo later; the Cargo workspace structure makes this a clean split
+
+**Alternatives considered:**
+- *Separate `SmallAIOS/smctl` repo* — Adds a repo that smctl itself would need to manage; circular bootstrapping problem
+- *Monorepo (all SmallAIOS in one repo)* — Too large a change to the existing multi-repo structure
 
 ## Risks / Trade-offs
 
