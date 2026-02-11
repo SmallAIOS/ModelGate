@@ -1,0 +1,24 @@
+[package]
+name = "smctl-mcp"
+description = "MCP server for smctl — exposes all capabilities to AI coding assistants"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+smctl-workspace = { path = "../smctl-workspace" }
+smctl-worktree = { path = "../smctl-worktree" }
+smctl-flow = { path = "../smctl-flow" }
+smctl-spec = { path = "../smctl-spec" }
+smctl-build = { path = "../smctl-build" }
+smctl-gate = { path = "../smctl-gate" }
+smctl-config = { path = "../smctl-config" }
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tracing.workspace = true

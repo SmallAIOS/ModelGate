@@ -1,0 +1,35 @@
+[package]
+name = "smctl"
+description = "SmallAIOS control — unified CLI and MCP server for the SmallAIOS ecosystem"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "smctl"
+path = "src/main.rs"
+
+[dependencies]
+smctl-workspace = { path = "../smctl-workspace" }
+smctl-worktree = { path = "../smctl-worktree" }
+smctl-flow = { path = "../smctl-flow" }
+smctl-spec = { path = "../smctl-spec" }
+smctl-build = { path = "../smctl-build" }
+smctl-gate = { path = "../smctl-gate" }
+smctl-config = { path = "../smctl-config" }
+smctl-mcp = { path = "../smctl-mcp" }
+
+clap.workspace = true
+clap_complete.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
