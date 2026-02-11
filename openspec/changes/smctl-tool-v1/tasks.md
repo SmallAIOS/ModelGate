@@ -88,6 +88,14 @@
 - [ ] Implement `smctl gate routes set` — configure model → endpoint route
 - [ ] Implement `smctl gate test` — run inference with test input
 - [ ] Implement `smctl gate logs` — stream logs (with --follow)
+- [ ] Implement `smctl gate models verify` — check tensor shapes against VerifiedMessageType schemas
+- [ ] Implement `smctl gate policy show` — display active SecurityPolicy (labels, whitelist, modes)
+- [ ] Implement `smctl gate policy load` — load signed policy blob with ML-DSA-65 verification
+- [ ] Implement `smctl gate policy diff` — compare two policies (labels, whitelist, mode changes)
+- [ ] Implement `smctl gate policy check` — run 5-layer verification pipeline on a model
+- [ ] Implement `smctl gate policy verify` — invoke TLA+ model checker on current policy
+- [ ] Implement `smctl gate boundaries list` — show trust boundaries with SecurityLabels
+- [ ] Implement `smctl gate boundaries check` — verify all crossings have formal proofs
 - [ ] Write integration tests with mock ModelGate server
 
 ## MCP Server (`smctl-mcp`)
@@ -101,7 +109,7 @@
 - [ ] Register all flow tools (feature/release/hotfix start/finish)
 - [ ] Register all spec tools (new, ff, apply, archive, validate, status)
 - [ ] Register build tools
-- [ ] Register gate tools (status, models, routes, test)
+- [ ] Register gate tools (status, models, routes, test, policy, boundaries)
 - [ ] Implement MCP resources for workspace state
 - [ ] Implement MCP resources for spec documents
 - [ ] Implement MCP resources for gate models/routes
@@ -127,14 +135,38 @@
 - [ ] Implement `smctl ss <name>` → spec new
 - [ ] Implement `smctl sb` → build
 
-## Formal Methods
+## Formal Methods — Domain 1: smctl Tool Correctness
 
 - [ ] Write TLA+ spec for git flow state machine (branch lifecycle transitions)
 - [ ] Write TLA+ spec for cross-repo merge ordering (validate-then-execute)
-- [ ] Model check git flow spec for illegal state reachability
-- [ ] Add `smctl build --verify` flag to invoke TLA+ and Lean checks
+- [ ] Write TLA+ spec for workspace state machine (init → configured → synced)
+- [ ] Model check all smctl TLA+ specs for illegal state reachability
+- [ ] Verify deadlock-freedom in cross-repo validate-then-execute
+
+## Formal Methods — Domain 2: ONNX Model Validation
+
+- [ ] Integrate with formal-type-gate VerifiedMessageType schema checking
+- [ ] Implement model hash → policy whitelist verification in `gate models add`
+- [ ] Implement tensor shape → MessageType invariant checking (10 invariant types)
+- [ ] Implement schema hash → Lean 4 proof artifact linkage verification
+- [ ] Write tests: model accepted when proofs present, rejected when missing
+
+## Formal Methods — Domain 3: MAC Policy Verification
+
+- [ ] Implement TLA+ model checker invocation for security gate state machine
+- [ ] Implement Biba no-write-up property verification across boundary definitions
+- [ ] Implement monotonic mode transition verification (Permissive → Enforcing)
+- [ ] Implement atomic policy swap verification with rollback guarantee
+- [ ] Implement Lean 4 proof checker invocation for integrity lattice properties
+- [ ] Write tests: policy verification pass/fail with known-good/bad policies
+
+## Formal Methods — Build Integration
+
+- [ ] Add `smctl build --verify` flag to invoke TLA+ (TLC) and Lean 4 checks
 - [ ] Add formal artifact presence checks to `smctl spec validate`
-- [ ] Document formal methods integration in design.md
+- [ ] Add MCP tools for verification status (`smctl_gate_policy_verify`, `smctl_build_verify`)
+- [ ] Integrate `smctl build --verify` into CI (GitHub Actions gate on formal proofs)
+- [ ] Document formal methods integration across all three domains
 
 ## Documentation
 
@@ -158,6 +190,10 @@
 - [ ] MCP tools return valid JSON matching tool schemas
 - [ ] Claude Code can discover and invoke smctl MCP tools
 - [ ] Cursor can discover and invoke smctl MCP tools
+- [ ] `smctl gate policy check` runs 5-layer verification pipeline
+- [ ] `smctl gate policy verify` invokes TLA+ model checker successfully
+- [ ] `smctl gate boundaries check` detects missing formal proofs
+- [ ] `smctl build --verify` gates on TLA+ and Lean 4 passing
 - [ ] `--dry-run` flag works for all destructive operations
 - [ ] `--json` output is parseable for all commands
 - [ ] Shell completions work for bash, zsh, fish

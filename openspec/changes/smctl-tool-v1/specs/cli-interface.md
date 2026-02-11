@@ -75,7 +75,16 @@ smctl
 │   │   ├── list                        # Show routing table
 │   │   └── set <model> <endpoint>      # Configure route
 │   ├── test <model> --input <file>     # Test inference
-│   └── logs [--follow]                 # Stream logs
+│   ├── logs [--follow]                 # Stream logs
+│   ├── policy
+│   │   ├── show                        # Display active SecurityPolicy
+│   │   ├── load <blob>                 # Load signed policy blob (ML-DSA-65)
+│   │   ├── diff <old> <new>            # Compare two policies
+│   │   ├── verify                      # Run TLA+ model checker on policy
+│   │   └── check <model>              # Run 5-layer verification on model
+│   └── boundaries
+│       ├── list                        # Show trust boundaries + SecurityLabels
+│       └── check                      # Verify all crossings have formal proofs
 │
 ├── serve
 │   ├── --mcp                           # Start MCP server

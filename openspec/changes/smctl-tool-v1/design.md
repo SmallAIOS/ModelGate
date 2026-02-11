@@ -333,25 +333,90 @@ For Cursor (`.cursor/mcp.json`):
 | **MCP protocol evolution** | MCP spec is still maturing; abstract transport and tool registration behind traits so protocol changes don't require rewriting core logic |
 | **AI assistant security** | MCP tools can execute destructive operations (branch delete, force merge); implement confirmation prompts and `--dry-run` support; respect MCP's built-in approval mechanisms |
 
-### Decision 12: Formal methods integration
+### Decision 12: Formal methods — three verification domains
 
-**Choice:** smctl integrates with the SmallAIOS formal methods toolchain, and key state machine logic within smctl itself is formally specified.
+**Choice:** smctl is the developer-facing interface for formal verification across three distinct domains:
 
-**SmallAIOS already uses:**
-- **TLA+** — Specifications for memory allocator, scheduler, and syscall dispatch
-- **Lean 4** — Proofs for cryptographic correctness
-- **MISRA-Rust** — Coding standards for safety-critical kernel code
+1. **smctl itself** — Verifying the tool's own state machines
+2. **ONNX models loaded into SmallAIOS** — Verifying model safety properties at the type gate
+3. **MAC (Mandatory Access Control) policy** — Verifying the formal-type-gate security enforcement
 
-**smctl's role in formal methods:**
-- `smctl spec validate` checks that formal verification artifacts (TLA+ specs, Lean proofs) are present when required by a spec's safety classification
-- `smctl build --verify` can invoke TLA+ model checking and Lean proof checking as part of the build pipeline
-- The git flow state machine (branch transitions: develop → feature → develop, develop → release → main) is itself specifiable in TLA+ to verify no illegal branch states are reachable
+This mirrors the existing `formal-type-gate-v1` architecture in SmallAIOS (see [openspec/changes/formal-type-gate-v1](https://github.com/SmallAIOS/SmallAIOS/tree/claude/plan-mac-strategy-uoqzp/openspec/changes/formal-type-gate-v1)).
+
+**SmallAIOS formal-type-gate already specifies:**
+- **Lean 4** — Biba integrity lattice proofs, registry well-formedness, tensor invariant soundness, label composition correctness
+- **TLA+** — Security gate state machine (safety, monotonicity, atomicity, liveness), policy update protocol (authentication, rollback, monotonicity)
+- **SPIN/Promela** — Additional model checking (0.4% of SmallAIOS codebase)
+- **MISRA-Rust** — Coding standards for safety-critical paths
+- **5-layer verification pipeline** — Capability → Classification → Integrity (Biba) → Message Type → Enforcement Mode
+
+**Domain 1: smctl tool correctness**
+
+smctl's own state machines are formally specified to prevent illegal states:
+
+| State Machine | Formal Method | Properties Verified |
+|---|---|---|
+| Git flow branch lifecycle | TLA+ | No illegal transitions (e.g., feature merged to main directly) |
+| Cross-repo merge ordering | TLA+ | Deadlock-freedom, validate-then-execute atomicity |
+| Workspace state (init → configured → synced) | TLA+ | No operations on uninitialized workspace |
+
+- `smctl flow` commands are generated from or checked against the TLA+ flow spec
+- The two-phase validate-then-execute pattern for cross-repo operations is modeled to ensure no partial corruption
+
+**Domain 2: ONNX model validation**
+
+smctl provides the developer interface for the formal-type-gate's model verification:
+
+- `smctl gate models add <path>` — Validates model hash against security policy whitelist before registration
+- `smctl gate models verify <name>` — Checks I/O tensor shapes conform to `VerifiedMessageType` schemas with schema-hash-linked Lean 4 proofs
+- `smctl gate policy show` — Displays the active `SecurityPolicy` (classification levels, integrity levels, enforcement modes, model whitelist)
+- `smctl gate policy check <model>` — Runs the 5-layer verification pipeline against a model: capability check, classification level, Biba integrity, message type invariants, enforcement mode resolution
+- MCP tool `smctl_gate_policy_check` exposes this to AI assistants so they can verify model safety before proposing deployment
+
+**Model validation invariants checked (from formal-type-gate-v1):**
+- `MaxRank`, `MinRank` — Tensor dimension bounds
+- `AllowedDtype` — Permitted data types
+- `MaxElements`, `MaxPayloadBytes` — Size bounds
+- `ValueRange` — Numeric range constraints
+- `EnumMembership` — Categorical validation
+- `NonZeroDimensions` — Shape validity
+- `MonotonicTimestamp` — Temporal ordering
+- `RateLimit` — Throughput bounds
+
+**Domain 3: MAC policy verification**
+
+smctl manages and verifies the Mandatory Access Control policy that the formal-type-gate enforces at runtime:
+
+- `smctl gate policy load <blob>` — Load a signed security policy blob (ML-DSA-65 signature verification)
+- `smctl gate policy diff <old> <new>` — Compare policies, show label/whitelist/mode changes
+- `smctl gate policy verify` — Run TLA+ model checker against current policy to verify:
+  - No unvalidated trust boundary crossings are reachable
+  - Monotonic mode transitions (Permissive → Enforcing, never reverse without explicit reset)
+  - Atomic policy swap with rollback guarantee
+  - Biba no-write-up holds for all defined data flows
+- `smctl gate boundaries list` — Show all trust boundary definitions with their `SecurityLabel` (classification + Biba integrity level + message type ID)
+- `smctl gate boundaries check` — Verify all boundary crossings have registered message types with linked formal proofs
+
+**MAC security labels (from formal-type-gate-v1):**
+```
+SecurityLabel {
+    classification: ClassificationLevel,  // Bell-LaPadula confidentiality
+    integrity: IntegrityLevel,            // Biba: Low | Medium | High
+    message_type: MessageTypeId,          // Links to VerifiedMessageType + schema hash
+}
+```
+
+**Integrity flow rules (Biba model):**
+- `Low` (untrusted network) → cannot write to `Medium` or `High`
+- `Medium` (authenticated, unverified) → cannot write to `High`
+- `High` (kernel-internal) → can read from any level
+- Explicit promotion gates required for upward flow
+
+**Build integration:**
+- `smctl build --verify` invokes TLA+ model checking (TLC) and Lean 4 proof checking as part of the build
+- `smctl spec validate` checks that formal artifacts (TLA+ specs, Lean proofs, SPIN models) are present when required by a spec's safety classification
 - MCP tools expose verification status so AI assistants can check proof state before proposing merges
-
-**Within smctl itself:**
-- The workspace state machine (init → configured → synced) and flow state machine (branch lifecycle) are candidates for TLA+ specification
-- Cross-repo merge ordering (validate-then-execute) can be formally verified for deadlock-freedom
-- This is not required for v0.1 but establishes the pattern
+- CI integration: `smctl build --verify` runs in GitHub Actions to gate PRs on formal verification passing
 
 ## Open Questions
 
@@ -360,3 +425,4 @@ For Cursor (`.cursor/mcp.json`):
 3. **Should `smctl spec` invoke AI assistants directly?** (e.g., calling OpenSpec's `/opsx:ff` via subprocess or API)
 4. **What is the minimum viable subcommand set for v0.1?** (workspace + worktree + flow, deferring build and gate?)
 5. **Which formal methods tool for smctl's own state machines?** (TLA+ for consistency with kernel, or Alloy/P for lighter-weight modeling?)
+6. **Should `smctl gate policy verify` invoke TLC/Lean directly or delegate to a `formal-verify` binary?** (Direct invocation is simpler; delegation allows the formal tools to evolve independently)
