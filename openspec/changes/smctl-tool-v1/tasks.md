@@ -143,30 +143,45 @@
 - [ ] Model check all smctl TLA+ specs for illegal state reachability
 - [ ] Verify deadlock-freedom in cross-repo validate-then-execute
 
-## Formal Methods — Domain 2: ONNX Model Validation
+## Formal Methods — Domain 2: ONNX Model Validation (Lean 4 + Cedar + P)
 
 - [ ] Integrate with formal-type-gate VerifiedMessageType schema checking
-- [ ] Implement model hash → policy whitelist verification in `gate models add`
+- [ ] Implement model hash → Cedar policy whitelist evaluation in `gate models add`
 - [ ] Implement tensor shape → MessageType invariant checking (10 invariant types)
 - [ ] Implement schema hash → Lean 4 proof artifact linkage verification
+- [ ] Define P state machine model for ModelGate async inference routing
+- [ ] Implement P-based fault injection test harness for inference paths
 - [ ] Write tests: model accepted when proofs present, rejected when missing
+- [ ] Write tests: Cedar policy correctly permits/denies model loading
 
-## Formal Methods — Domain 3: MAC Policy Verification
+## Formal Methods — Domain 3: MAC Policy with Cedar
 
-- [ ] Implement TLA+ model checker invocation for security gate state machine
-- [ ] Implement Biba no-write-up property verification across boundary definitions
-- [ ] Implement monotonic mode transition verification (Permissive → Enforcing)
-- [ ] Implement atomic policy swap verification with rollback guarantee
-- [ ] Implement Lean 4 proof checker invocation for integrity lattice properties
-- [ ] Write tests: policy verification pass/fail with known-good/bad policies
+- [ ] Add `cedar-policy` crate dependency to smctl-gate
+- [ ] Define Cedar entity schema for SmallAIOS (principals, actions, resources)
+- [ ] Map SecurityLabel fields to Cedar context attributes
+- [ ] Map BoundaryDefinition to Cedar resource types
+- [ ] Write Cedar policies for Biba no-write-up enforcement
+- [ ] Write Cedar policies for model whitelist authorization
+- [ ] Write Cedar policies for inference routing by integrity level
+- [ ] Implement `smctl gate policy write` — Cedar policy authoring/editing
+- [ ] Implement `smctl gate policy analyze` — invoke Cedar symbolic compiler + CVC5
+- [ ] Implement `smctl gate policy test <request.json>` — Cedar evaluator single-request check
+- [ ] Implement TLA+ model checker invocation for policy update protocol (behavioral)
+- [ ] Implement monotonic mode transition verification (Permissive → Enforcing) via TLA+
+- [ ] Implement atomic policy swap verification with rollback guarantee via TLA+
+- [ ] Write tests: Cedar analysis detects Biba violation in intentionally broken policy
+- [ ] Write tests: Cedar analysis proves policy equivalence for refactored policies
+- [ ] Write tests: TLA+ behavioral verification pass/fail with known-good/bad update sequences
 
 ## Formal Methods — Build Integration
 
-- [ ] Add `smctl build --verify` flag to invoke TLA+ (TLC) and Lean 4 checks
+- [ ] Add `smctl build --verify` flag to invoke TLA+ (TLC), Cedar (SMT/CVC5), and Lean 4
+- [ ] Add `smctl build --verify --cedar` for Cedar-only policy analysis
 - [ ] Add formal artifact presence checks to `smctl spec validate`
-- [ ] Add MCP tools for verification status (`smctl_gate_policy_verify`, `smctl_build_verify`)
+- [ ] Add MCP tools for verification status (`smctl_gate_policy_verify`, `smctl_gate_policy_analyze`, `smctl_build_verify`)
 - [ ] Integrate `smctl build --verify` into CI (GitHub Actions gate on formal proofs)
 - [ ] Document formal methods integration across all three domains
+- [ ] Document Cedar entity schema and policy authoring guide
 
 ## Documentation
 
@@ -191,9 +206,12 @@
 - [ ] Claude Code can discover and invoke smctl MCP tools
 - [ ] Cursor can discover and invoke smctl MCP tools
 - [ ] `smctl gate policy check` runs 5-layer verification pipeline
-- [ ] `smctl gate policy verify` invokes TLA+ model checker successfully
-- [ ] `smctl gate boundaries check` detects missing formal proofs
-- [ ] `smctl build --verify` gates on TLA+ and Lean 4 passing
+- [ ] `smctl gate policy analyze` invokes Cedar SMT analysis via CVC5
+- [ ] `smctl gate policy test` evaluates Cedar policy on a sample request
+- [ ] `smctl gate policy verify` invokes Cedar (SMT) + TLA+ (behavioral) successfully
+- [ ] `smctl gate boundaries check` detects missing Cedar rules and formal proofs
+- [ ] `smctl build --verify` gates on TLA+, Cedar, and Lean 4 passing
+- [ ] `smctl build --verify --cedar` runs Cedar analysis independently
 - [ ] `--dry-run` flag works for all destructive operations
 - [ ] `--json` output is parseable for all commands
 - [ ] Shell completions work for bash, zsh, fish

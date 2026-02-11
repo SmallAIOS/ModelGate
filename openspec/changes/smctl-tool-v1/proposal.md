@@ -111,6 +111,7 @@ ModelGate/
 - `reqwest` — HTTP client for ModelGate health/inference operations
 - `dialoguer` — Interactive prompts for flow and release workflows
 - `rmcp` — Official Rust MCP SDK (modelcontextprotocol/rust-sdk), JSON-RPC over stdio/SSE
+- `cedar-policy` — Cedar authorization policy engine (CNCF Sandbox, Lean 4-verified, native Rust)
 - `tokio` — Async runtime for MCP server and SSE transport
 - `axum` — HTTP server for SSE-based MCP transport
 
@@ -123,3 +124,7 @@ ModelGate/
 - [SmallAIOS kernel](https://github.com/SmallAIOS/SmallAIOS)
 - [Model Context Protocol (MCP)](https://modelcontextprotocol.io)
 - [MCP specification](https://spec.modelcontextprotocol.io)
+- [Cedar policy language](https://github.com/cedar-policy) — CNCF Sandbox, Lean 4-verified authorization
+- [Cedar formal spec in Lean 4](https://github.com/cedar-policy/cedar-spec)
+- [P language](https://github.com/p-org/P) — Microsoft Research, async state machine testing
+- [SmallAIOS formal-type-gate](https://github.com/SmallAIOS/SmallAIOS/tree/claude/plan-mac-strategy-uoqzp/openspec/changes/formal-type-gate-v1)

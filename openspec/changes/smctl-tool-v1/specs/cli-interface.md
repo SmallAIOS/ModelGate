@@ -78,9 +78,12 @@ smctl
 │   ├── logs [--follow]                 # Stream logs
 │   ├── policy
 │   │   ├── show                        # Display active SecurityPolicy
+│   │   ├── write                       # Author/edit Cedar policies
+│   │   ├── analyze                     # Cedar SMT-based property analysis
+│   │   ├── test <request.json>         # Cedar evaluator: single request check
 │   │   ├── load <blob>                 # Load signed policy blob (ML-DSA-65)
-│   │   ├── diff <old> <new>            # Compare two policies
-│   │   ├── verify                      # Run TLA+ model checker on policy
+│   │   ├── diff <old> <new>            # Cedar semantic policy comparison
+│   │   ├── verify                      # Cedar (SMT) + TLA+ (behavioral)
 │   │   └── check <model>              # Run 5-layer verification on model
 │   └── boundaries
 │       ├── list                        # Show trust boundaries + SecurityLabels

@@ -333,9 +333,11 @@ For Cursor (`.cursor/mcp.json`):
 | **MCP protocol evolution** | MCP spec is still maturing; abstract transport and tool registration behind traits so protocol changes don't require rewriting core logic |
 | **AI assistant security** | MCP tools can execute destructive operations (branch delete, force merge); implement confirmation prompts and `--dry-run` support; respect MCP's built-in approval mechanisms |
 
-### Decision 12: Formal methods — three verification domains
+### Decision 12: Formal methods — multi-tool verification across three domains
 
-**Choice:** smctl is the developer-facing interface for formal verification across three distinct domains:
+**Choice:** smctl is the developer-facing interface for formal verification across three distinct domains, using the right tool for each problem shape. The full analysis is in [specs/formal-methods.md](specs/formal-methods.md).
+
+**Verification domains:**
 
 1. **smctl itself** — Verifying the tool's own state machines
 2. **ONNX models loaded into SmallAIOS** — Verifying model safety properties at the type gate
@@ -343,14 +345,107 @@ For Cursor (`.cursor/mcp.json`):
 
 This mirrors the existing `formal-type-gate-v1` architecture in SmallAIOS (see [openspec/changes/formal-type-gate-v1](https://github.com/SmallAIOS/SmallAIOS/tree/claude/plan-mac-strategy-uoqzp/openspec/changes/formal-type-gate-v1)).
 
-**SmallAIOS formal-type-gate already specifies:**
-- **Lean 4** — Biba integrity lattice proofs, registry well-formedness, tensor invariant soundness, label composition correctness
-- **TLA+** — Security gate state machine (safety, monotonicity, atomicity, liveness), policy update protocol (authentication, rollback, monotonicity)
-- **SPIN/Promela** — Additional model checking (0.4% of SmallAIOS codebase)
-- **MISRA-Rust** — Coding standards for safety-critical paths
-- **5-layer verification pipeline** — Capability → Classification → Integrity (Biba) → Message Type → Enforcement Mode
+**Recommended tool stack:**
 
-**Domain 1: smctl tool correctness**
+| Tool | Role | Domain | Priority |
+|---|---|---|---|
+| **Cedar** | MAC policy definition, authorization, SMT analysis | Policy (Domain 3) | v0.1 |
+| **TLA+** | Behavioral properties (state machines, protocol ordering) | Tool correctness (Domain 1) + policy behavior (Domain 3) | v0.1 |
+| **Lean 4** | Mathematical proofs (lattice, tensor invariants, Cedar evaluator proofs) | Model validation (Domain 2) + Cedar proof chain | v0.1 |
+| **P** | Async protocol testing (ModelGate routing, fault injection) | Model validation (Domain 2) | v0.2 |
+| **SPIN/Promela** | Protocol-level concurrent verification | All domains | v0.1 |
+| **Alloy** | Structural analysis (optional — graph topology, registry well-formedness) | Tool correctness (Domain 1) | v0.3 |
+| **MISRA-Rust** | Coding standards for safety-critical paths | All domains | v0.1 |
+
+### Decision 13: Cedar as the MAC policy language
+
+**Choice:** Use [Cedar](https://github.com/cedar-policy) (AWS, CNCF Sandbox) as the authorization policy language for SmallAIOS MAC enforcement, replacing hand-rolled policy logic.
+
+**Rationale — six converging advantages:**
+
+1. **Purpose-built for authorization.** Cedar has native concepts for principals, actions, resources, and conditions that map directly to SmallAIOS's SecurityLabel, BoundaryDefinition, and enforcement model. Unlike Alloy (structural), TLA+ (behavioral), or Rego (general-purpose), Cedar is designed specifically for access control.
+
+2. **Formally verified in Lean 4.** Cedar's evaluator, validator, and symbolic compiler are modeled and proved correct in Lean 4 — the same proof assistant SmallAIOS already uses for Biba integrity lattice proofs and tensor invariant soundness. This creates a unified proof chain: Cedar policy → Lean 4-proved evaluator → Lean 4-proved symbolic compiler → SMT solver. The validator soundness proof alone is 4,686 lines of Lean 4.
+
+3. **Native Rust SDK.** The `cedar-policy` crate is Cedar's production implementation. smctl links against it directly — no FFI, no subprocess, no language boundary. This is the tightest possible integration for a Rust-native project.
+
+4. **SMT-based policy analysis.** Cedar's symbolic compiler translates policies into SMT-LIB formulas checked by CVC5, enabling precise verification questions:
+   - "Can a Low-integrity message ever reach a High-integrity boundary?" (information flow)
+   - "Is there any request that policy A allows but policy B denies?" (policy equivalence)
+   - "Does every model in the whitelist have a valid trust boundary path?" (completeness)
+   - Average encoding + solving: 75.1ms — fast enough for CI and interactive `smctl` use.
+
+5. **28–80x faster than Rego.** Cedar's evaluator is 42.8–80.8x faster than Rego and 28.7–35.2x faster than OpenFGA. For runtime enforcement inside SmallAIOS's security gate (where every trust boundary crossing is checked), this performance matters.
+
+6. **CNCF Sandbox governance.** Cedar is now under the Cloud Native Computing Foundation with adoption by AWS, Cloudflare, MongoDB, and StrongDM. Long-term viability is strong.
+
+**Alternatives evaluated and rejected:**
+
+| Alternative | Why Not |
+|---|---|
+| **Rego/OPA** | No formal proofs of evaluator correctness; non-deterministic evaluation possible; Go-native (Rust requires FFI/WASM); expressiveness is a liability in safety-critical context |
+| **Alloy** | Not a policy language — no authorization concepts, no runtime evaluator, no Rust SDK, no Lean 4 proof chain |
+| **Hand-rolled Rust** | No formal verification toolchain; no SMT-based analysis; policy changes require recompilation |
+
+**How Cedar maps to the formal-type-gate:**
+
+| SmallAIOS Concept | Cedar Mapping |
+|---|---|
+| `SecurityLabel.classification` | Cedar `context.classification` attribute |
+| `SecurityLabel.integrity` (Biba) | Cedar `context.integrity` attribute with ordered comparison |
+| `SecurityLabel.message_type` | Cedar resource type |
+| `BoundaryDefinition` | Cedar resource (e.g., `SmallAIOS::Boundary::"network-ingress"`) |
+| `EnforcementMode` | Cedar policy effect (`permit` / `forbid`) |
+| `ModelWhitelist` | Cedar policy set with hash-based conditions |
+| 5-layer verification pipeline | Cedar policy set with ordered evaluation |
+
+**Example Cedar policies for SmallAIOS MAC:**
+
+```cedar
+// Biba no-write-up: Low integrity cannot write to High integrity boundaries
+forbid(
+    principal,
+    action == Action::"cross_boundary",
+    resource
+) when {
+    principal.integrity < resource.min_integrity
+};
+
+// Model whitelist: only approved models can load
+permit(
+    principal == SmallAIOS::Process::"onnx-runtime",
+    action == Action::"load_model",
+    resource
+) when {
+    resource.hash in context.approved_model_hashes
+};
+
+// Inference routing: Medium integrity messages can reach inference boundaries
+permit(
+    principal,
+    action == Action::"route_inference",
+    resource
+) when {
+    principal.integrity >= IntegrityLevel::"Medium"
+    && resource in SmallAIOS::BoundaryGroup::"inference-endpoints"
+};
+```
+
+**Cedar + Lean 4 verification chain:**
+
+```
+Cedar policy (human-authored)
+    ↓ Cedar validator (Lean 4 proved sound)
+Validated policy
+    ↓ Cedar symbolic compiler (Lean 4 proved sound + complete)
+SMT-LIB formulas
+    ↓ CVC5 solver
+Property verification results
+    ↓ smctl gate policy verify
+Pass/fail + counterexamples
+```
+
+**Domain 1: smctl tool correctness (TLA+)**
 
 smctl's own state machines are formally specified to prevent illegal states:
 
@@ -360,42 +455,26 @@ smctl's own state machines are formally specified to prevent illegal states:
 | Cross-repo merge ordering | TLA+ | Deadlock-freedom, validate-then-execute atomicity |
 | Workspace state (init → configured → synced) | TLA+ | No operations on uninitialized workspace |
 
-- `smctl flow` commands are generated from or checked against the TLA+ flow spec
-- The two-phase validate-then-execute pattern for cross-repo operations is modeled to ensure no partial corruption
+**Domain 2: ONNX model validation (Lean 4 + Cedar + P)**
 
-**Domain 2: ONNX model validation**
+- `smctl gate models add <path>` — Cedar policy evaluation: is this model authorized by the whitelist?
+- `smctl gate models verify <name>` — Lean 4: tensor shapes conform to VerifiedMessageType schemas with schema-hash-linked proofs
+- `smctl gate policy check <model>` — Cedar + Lean 4: full 5-layer verification pipeline
+- `smctl gate test <model> --fuzz` — P: fault injection testing for async inference paths
 
-smctl provides the developer interface for the formal-type-gate's model verification:
+**Model validation invariants (from formal-type-gate-v1):**
+`MaxRank`, `MinRank`, `AllowedDtype`, `MaxElements`, `MaxPayloadBytes`, `ValueRange`, `EnumMembership`, `NonZeroDimensions`, `MonotonicTimestamp`, `RateLimit`
 
-- `smctl gate models add <path>` — Validates model hash against security policy whitelist before registration
-- `smctl gate models verify <name>` — Checks I/O tensor shapes conform to `VerifiedMessageType` schemas with schema-hash-linked Lean 4 proofs
-- `smctl gate policy show` — Displays the active `SecurityPolicy` (classification levels, integrity levels, enforcement modes, model whitelist)
-- `smctl gate policy check <model>` — Runs the 5-layer verification pipeline against a model: capability check, classification level, Biba integrity, message type invariants, enforcement mode resolution
-- MCP tool `smctl_gate_policy_check` exposes this to AI assistants so they can verify model safety before proposing deployment
+**Domain 3: MAC policy verification (Cedar + TLA+)**
 
-**Model validation invariants checked (from formal-type-gate-v1):**
-- `MaxRank`, `MinRank` — Tensor dimension bounds
-- `AllowedDtype` — Permitted data types
-- `MaxElements`, `MaxPayloadBytes` — Size bounds
-- `ValueRange` — Numeric range constraints
-- `EnumMembership` — Categorical validation
-- `NonZeroDimensions` — Shape validity
-- `MonotonicTimestamp` — Temporal ordering
-- `RateLimit` — Throughput bounds
-
-**Domain 3: MAC policy verification**
-
-smctl manages and verifies the Mandatory Access Control policy that the formal-type-gate enforces at runtime:
-
-- `smctl gate policy load <blob>` — Load a signed security policy blob (ML-DSA-65 signature verification)
-- `smctl gate policy diff <old> <new>` — Compare policies, show label/whitelist/mode changes
-- `smctl gate policy verify` — Run TLA+ model checker against current policy to verify:
-  - No unvalidated trust boundary crossings are reachable
-  - Monotonic mode transitions (Permissive → Enforcing, never reverse without explicit reset)
-  - Atomic policy swap with rollback guarantee
-  - Biba no-write-up holds for all defined data flows
-- `smctl gate boundaries list` — Show all trust boundary definitions with their `SecurityLabel` (classification + Biba integrity level + message type ID)
-- `smctl gate boundaries check` — Verify all boundary crossings have registered message types with linked formal proofs
+- `smctl gate policy write` — Author Cedar policies for SmallAIOS MAC
+- `smctl gate policy analyze` — Cedar SMT-based property analysis (information flow, equivalence, completeness)
+- `smctl gate policy test <request.json>` — Cedar evaluator: single request evaluation
+- `smctl gate policy load <blob>` — Load signed policy blob (ML-DSA-65 verification)
+- `smctl gate policy diff <old> <new>` — Cedar semantic policy comparison
+- `smctl gate policy verify` — Cedar (SMT analysis) + TLA+ (behavioral: monotonic transitions, atomic swap, rollback)
+- `smctl gate boundaries list` — Show trust boundaries with SecurityLabels
+- `smctl gate boundaries check` — Verify all crossings have Cedar rules + Lean 4 proofs
 
 **MAC security labels (from formal-type-gate-v1):**
 ```
@@ -406,17 +485,12 @@ SecurityLabel {
 }
 ```
 
-**Integrity flow rules (Biba model):**
-- `Low` (untrusted network) → cannot write to `Medium` or `High`
-- `Medium` (authenticated, unverified) → cannot write to `High`
-- `High` (kernel-internal) → can read from any level
-- Explicit promotion gates required for upward flow
-
 **Build integration:**
-- `smctl build --verify` invokes TLA+ model checking (TLC) and Lean 4 proof checking as part of the build
-- `smctl spec validate` checks that formal artifacts (TLA+ specs, Lean proofs, SPIN models) are present when required by a spec's safety classification
+- `smctl build --verify` invokes TLA+ (TLC), Cedar (SMT/CVC5), Lean 4, and SPIN as part of the build
+- `smctl build --verify --cedar` runs Cedar policy analysis only
+- `smctl spec validate` checks that formal artifacts are present per spec safety classification
 - MCP tools expose verification status so AI assistants can check proof state before proposing merges
-- CI integration: `smctl build --verify` runs in GitHub Actions to gate PRs on formal verification passing
+- CI integration: `smctl build --verify` gates PRs on formal verification passing
 
 ## Open Questions
 
@@ -424,5 +498,5 @@ SecurityLabel {
 2. **Should worktrees share a Cargo target directory?** (saves disk but complicates parallel builds)
 3. **Should `smctl spec` invoke AI assistants directly?** (e.g., calling OpenSpec's `/opsx:ff` via subprocess or API)
 4. **What is the minimum viable subcommand set for v0.1?** (workspace + worktree + flow, deferring build and gate?)
-5. **Which formal methods tool for smctl's own state machines?** (TLA+ for consistency with kernel, or Alloy/P for lighter-weight modeling?)
-6. **Should `smctl gate policy verify` invoke TLC/Lean directly or delegate to a `formal-verify` binary?** (Direct invocation is simpler; delegation allows the formal tools to evolve independently)
+5. **Should `smctl gate policy verify` invoke TLC/Lean/CVC5 directly or delegate to a `formal-verify` binary?** (Direct invocation is simpler; delegation allows the formal tools to evolve independently)
+6. **Cedar entity schema for SmallAIOS:** How closely should Cedar entity types mirror the Rust types in the formal-type-gate? (1:1 mapping vs. higher-level abstraction)
