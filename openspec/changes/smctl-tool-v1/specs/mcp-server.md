@@ -42,6 +42,57 @@
 └──────────────────────────────────────┘
 ```
 
+## Implementation: Official Rust MCP SDK (`rmcp`)
+
+smctl uses the **official Rust MCP SDK** — crate [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) — which is maintained under the `modelcontextprotocol` GitHub organization (Linux Foundation). This is not a third-party binding; it is the first-party Rust SDK alongside the TypeScript, Python, Go, C#, Java, and Swift SDKs.
+
+**Cargo dependency:**
+```toml
+[dependencies]
+rmcp = { version = "0.8", features = ["server", "transport-stdio", "transport-sse"] }
+tokio = { version = "1", features = ["full"] }
+schemars = "1"       # JSON Schema generation for tool input schemas
+```
+
+**Server pattern (from rmcp):**
+```rust
+use rmcp::{ServiceExt, transport::stdio};
+
+// SmctlServer implements ServerHandler with #[tool_handler] macros
+let service = SmctlServer::new(workspace)
+    .serve(stdio())
+    .await?;
+
+service.waiting().await?;
+```
+
+**Tool registration uses `#[tool]` attribute macros:**
+```rust
+use rmcp::handler::{tool_handler, prompt_handler};
+
+#[tool_handler]
+impl ServerHandler for SmctlServer {
+    // Each #[tool] method becomes an MCP tool
+    #[tool(description = "Create linked worktrees for parallel feature development")]
+    async fn worktree_add(&self, name: String, repos: Option<Vec<String>>) -> CallToolResult {
+        // delegates to smctl-worktree core logic
+    }
+
+    #[tool(description = "Start a feature branch across repos")]
+    async fn flow_feature_start(&self, name: String, worktree: Option<bool>) -> CallToolResult {
+        // delegates to smctl-flow core logic
+    }
+}
+```
+
+**Key `rmcp` features used:**
+- `#[tool]` / `#[tool_handler]` — Declarative tool registration with auto-generated JSON Schema from Rust types
+- `schemars` derive — Input parameter schemas generated at compile time
+- `stdio()` transport — Standard stdin/stdout for Claude Code, Cursor, etc.
+- `SseServer` transport — HTTP SSE for remote/web clients
+- `ServerHandler` trait — Unified handler for tools, resources, and prompts
+- Resource subscription via `notifications/resources/updated`
+
 ## Transport Modes
 
 ### stdio (default)

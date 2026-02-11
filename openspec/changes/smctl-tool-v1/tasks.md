@@ -127,6 +127,15 @@
 - [ ] Implement `smctl ss <name>` → spec new
 - [ ] Implement `smctl sb` → build
 
+## Formal Methods
+
+- [ ] Write TLA+ spec for git flow state machine (branch lifecycle transitions)
+- [ ] Write TLA+ spec for cross-repo merge ordering (validate-then-execute)
+- [ ] Model check git flow spec for illegal state reachability
+- [ ] Add `smctl build --verify` flag to invoke TLA+ and Lean checks
+- [ ] Add formal artifact presence checks to `smctl spec validate`
+- [ ] Document formal methods integration in design.md
+
 ## Documentation
 
 - [ ] Write README.md with installation and quickstart

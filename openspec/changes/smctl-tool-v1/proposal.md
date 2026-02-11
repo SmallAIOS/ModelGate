@@ -110,7 +110,7 @@ ModelGate/
 - `serde` / `serde_json` — Serialization for config and spec files
 - `reqwest` — HTTP client for ModelGate health/inference operations
 - `dialoguer` — Interactive prompts for flow and release workflows
-- `rmcp` or `mcp-server` — MCP protocol implementation (JSON-RPC over stdio/SSE)
+- `rmcp` — Official Rust MCP SDK (modelcontextprotocol/rust-sdk), JSON-RPC over stdio/SSE
 - `tokio` — Async runtime for MCP server and SSE transport
 - `axum` — HTTP server for SSE-based MCP transport
 

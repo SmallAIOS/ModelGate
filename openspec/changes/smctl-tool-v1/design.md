@@ -333,9 +333,30 @@ For Cursor (`.cursor/mcp.json`):
 | **MCP protocol evolution** | MCP spec is still maturing; abstract transport and tool registration behind traits so protocol changes don't require rewriting core logic |
 | **AI assistant security** | MCP tools can execute destructive operations (branch delete, force merge); implement confirmation prompts and `--dry-run` support; respect MCP's built-in approval mechanisms |
 
+### Decision 12: Formal methods integration
+
+**Choice:** smctl integrates with the SmallAIOS formal methods toolchain, and key state machine logic within smctl itself is formally specified.
+
+**SmallAIOS already uses:**
+- **TLA+** — Specifications for memory allocator, scheduler, and syscall dispatch
+- **Lean 4** — Proofs for cryptographic correctness
+- **MISRA-Rust** — Coding standards for safety-critical kernel code
+
+**smctl's role in formal methods:**
+- `smctl spec validate` checks that formal verification artifacts (TLA+ specs, Lean proofs) are present when required by a spec's safety classification
+- `smctl build --verify` can invoke TLA+ model checking and Lean proof checking as part of the build pipeline
+- The git flow state machine (branch transitions: develop → feature → develop, develop → release → main) is itself specifiable in TLA+ to verify no illegal branch states are reachable
+- MCP tools expose verification status so AI assistants can check proof state before proposing merges
+
+**Within smctl itself:**
+- The workspace state machine (init → configured → synced) and flow state machine (branch lifecycle) are candidates for TLA+ specification
+- Cross-repo merge ordering (validate-then-execute) can be formally verified for deadlock-freedom
+- This is not required for v0.1 but establishes the pattern
+
 ## Open Questions
 
 1. **Should smctl manage the smctl binary itself?** (`smctl self-update` via GitHub releases)
 2. **Should worktrees share a Cargo target directory?** (saves disk but complicates parallel builds)
 3. **Should `smctl spec` invoke AI assistants directly?** (e.g., calling OpenSpec's `/opsx:ff` via subprocess or API)
 4. **What is the minimum viable subcommand set for v0.1?** (workspace + worktree + flow, deferring build and gate?)
+5. **Which formal methods tool for smctl's own state machines?** (TLA+ for consistency with kernel, or Alloy/P for lighter-weight modeling?)
