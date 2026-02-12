@@ -464,11 +464,7 @@ pub mod worktree {
     }
 
     /// Get the path to a worktree set (for shell integration / `cd`).
-    pub fn worktree_path(
-        root: &Path,
-        manifest: &WorkspaceManifest,
-        name: &str,
-    ) -> Result<PathBuf> {
+    pub fn worktree_path(root: &Path, manifest: &WorkspaceManifest, name: &str) -> Result<PathBuf> {
         let base = root.join(&manifest.worktree.base_dir).join(name);
         if !base.exists() {
             anyhow::bail!("worktree set '{name}' does not exist");

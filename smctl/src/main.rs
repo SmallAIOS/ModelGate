@@ -437,13 +437,13 @@ async fn run(cli: Cli) -> Result<i32> {
                 });
 
                 if dry_run {
-                    println!("would add repo '{}' ({}) to workspace", repo_name, url);
+                    println!("would add repo '{repo_name}' ({url}) to workspace");
                     return Ok(exit_code::DRY_RUN);
                 }
 
                 smctl_workspace::add_repo(&mut manifest, &repo_name, &url, path.as_deref())?;
                 manifest.save_to_root(&root)?;
-                println!("added repo '{}' to workspace", repo_name);
+                println!("added repo '{repo_name}' to workspace");
                 Ok(exit_code::SUCCESS)
             }
             WorkspaceCommands::Remove { repo } => {
@@ -451,13 +451,13 @@ async fn run(cli: Cli) -> Result<i32> {
                 let mut manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                 if dry_run {
-                    println!("would remove repo '{}' from workspace", repo);
+                    println!("would remove repo '{repo}' from workspace");
                     return Ok(exit_code::DRY_RUN);
                 }
 
                 smctl_workspace::remove_repo(&mut manifest, &repo)?;
                 manifest.save_to_root(&root)?;
-                println!("removed repo '{}' from workspace", repo);
+                println!("removed repo '{repo}' from workspace");
                 Ok(exit_code::SUCCESS)
             }
             WorkspaceCommands::Status => {
@@ -543,10 +543,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 let branch = format!("{}{}", manifest.flow.feature_prefix, &name);
 
                 if dry_run {
-                    println!(
-                        "would create worktree set '{}' on branch '{}'",
-                        name, branch
-                    );
+                    println!("would create worktree set '{name}' on branch '{branch}'");
                     return Ok(exit_code::DRY_RUN);
                 }
 
@@ -598,12 +595,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                 if dry_run {
-                    println!("would remove worktree set '{}'", name);
+                    println!("would remove worktree set '{name}'");
                     return Ok(exit_code::DRY_RUN);
                 }
 
                 smctl_workspace::worktree::remove_worktree(&root, &manifest, &name, force)?;
-                println!("removed worktree set '{}'", name);
+                println!("removed worktree set '{name}'");
                 Ok(exit_code::SUCCESS)
             }
             WorktreeCommands::Cd { name } => {
@@ -655,7 +652,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would start feature '{}'", name);
+                        println!("would start feature '{name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -676,7 +673,7 @@ async fn run(cli: Cli) -> Result<i32> {
                             repos.as_deref(),
                             &result.branch_name,
                         );
-                        println!("created worktree set '{}'", name);
+                        println!("created worktree set '{name}'");
                     }
 
                     Ok(exit_code::SUCCESS)
@@ -686,7 +683,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would finish feature '{}'", name);
+                        println!("would finish feature '{name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -725,7 +722,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would start release '{}'", version);
+                        println!("would start release '{version}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -744,7 +741,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would finish release '{}'", version);
+                        println!("would finish release '{version}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -783,7 +780,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would start hotfix '{}'", name);
+                        println!("would start hotfix '{name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -802,7 +799,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would finish hotfix '{}'", name);
+                        println!("would finish hotfix '{name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -845,7 +842,7 @@ async fn run(cli: Cli) -> Result<i32> {
             match command {
                 SpecCommands::New { name } => {
                     if dry_run {
-                        println!("would create spec '{}'", name);
+                        println!("would create spec '{name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -941,7 +938,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 SpecCommands::Archive { name } => {
                     let spec_name = name.context("spec name required")?;
                     if dry_run {
-                        println!("would archive spec '{}'", spec_name);
+                        println!("would archive spec '{spec_name}'");
                         return Ok(exit_code::DRY_RUN);
                     }
                     let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
@@ -1016,9 +1013,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
                 ConfigCommands::Get { key } => {
                     match config.get(&key) {
-                        Some(value) => println!("{}", value),
+                        Some(value) => println!("{value}"),
                         None => {
-                            eprintln!("config key '{}' not set", key);
+                            eprintln!("config key '{key}' not set");
                             return Ok(exit_code::GENERAL_ERROR);
                         }
                     }
@@ -1027,7 +1024,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 ConfigCommands::Set { key, value } => {
                     config.set(&key, &value)?;
                     config.save_user_config()?;
-                    println!("set {} = {}", key, value);
+                    println!("set {key} = {value}");
                     Ok(exit_code::SUCCESS)
                 }
                 ConfigCommands::Edit => {
@@ -1070,15 +1067,14 @@ async fn run(cli: Cli) -> Result<i32> {
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
             if dry_run {
-                println!("would start feature '{}' with worktree", name);
+                println!("would start feature '{name}' with worktree");
                 return Ok(exit_code::DRY_RUN);
             }
 
             let result = smctl_flow::feature_start(&root, &manifest, &name, None)?;
             let branch = &result.branch_name;
-            let _ =
-                smctl_workspace::worktree::add_worktree(&root, &manifest, &name, None, branch);
-            println!("started feature '{}' with worktree", name);
+            let _ = smctl_workspace::worktree::add_worktree(&root, &manifest, &name, None, branch);
+            println!("started feature '{name}' with worktree");
             Ok(exit_code::SUCCESS)
         }
         Commands::Done { name } => {
@@ -1086,13 +1082,13 @@ async fn run(cli: Cli) -> Result<i32> {
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
             if dry_run {
-                println!("would finish feature '{}' and remove worktree", name);
+                println!("would finish feature '{name}' and remove worktree");
                 return Ok(exit_code::DRY_RUN);
             }
 
             let _ = smctl_workspace::worktree::remove_worktree(&root, &manifest, &name, false);
             let _result = smctl_flow::feature_finish(&root, &manifest, &name)?;
-            println!("finished feature '{}' and removed worktree", name);
+            println!("finished feature '{name}' and removed worktree");
             Ok(exit_code::SUCCESS)
         }
         Commands::Ss { name } => {
@@ -1101,7 +1097,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let openspec_dir = root.join(&manifest.spec.openspec_dir);
 
             if dry_run {
-                println!("would create spec '{}'", name);
+                println!("would create spec '{name}'");
                 return Ok(exit_code::DRY_RUN);
             }
 
