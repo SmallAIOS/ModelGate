@@ -1,0 +1,14 @@
+project:
+  name: ModelGate
+  description: "SmallAIOS developer tooling and model gateway — unified CLI (smctl) for multi-repo workspace management, git flow, OpenSpec workflow, and build orchestration"
+  version: "0.1.0"
+  license: Apache-2.0
+
+settings:
+  spec_dir: openspec
+  artifact_types:
+    - proposal
+    - specs
+    - design
+    - tasks
+  auto_index: true
