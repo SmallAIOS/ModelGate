@@ -1,0 +1,21 @@
+# Build artifacts
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local artifacts (AI-generated, temp files, not for git)
+.local/
+
+# Secrets
+*.pem
+*.key
+.env
