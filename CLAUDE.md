@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ModelGate is the developer tooling and model gateway hub for the SmallAIOS ecosystem. Its primary deliverable is **`smctl`** (SmallAIOS Control), a unified CLI tool for managing the SmallAIOS multi-repo workspace.
 
-**Current state:** Early development — project initialization phase. The `smctl` tool design (OpenSpec specs) and initial implementation exist on a feature branch.
+**Current state:** Alpha (v0.1.0) — initial `smctl` CLI with workspace, git flow, OpenSpec, and build orchestration. 5 crates, 21 tests.
 
 ## What smctl Does
 
