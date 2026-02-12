@@ -1,0 +1,276 @@
+# smctl MCP Server Specification
+
+## Overview
+
+`smctl serve --mcp` starts a Model Context Protocol (MCP) server that exposes all smctl capabilities as tools and resources. This enables AI coding assistants — Claude Code, Cursor, Windsurf, Cline, and any MCP-compatible client — to programmatically manage SmallAIOS workspaces, branches, specs, and builds.
+
+## Architecture
+
+```
+┌──────────────────────────────────────┐
+│  AI Coding Assistant                 │
+│  (Claude Code / Cursor / Windsurf)   │
+│                                      │
+│  MCP Client                          │
+│    │                                 │
+│    │ JSON-RPC 2.0                    │
+│    │ (stdio / SSE / streamable HTTP) │
+└────┼─────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────┐
+│  smctl serve --mcp                   │
+│                                      │
+│  ┌─────────┐  ┌──────────────────┐   │
+│  │Transport│  │ Tool Registry    │   │
+│  │ Layer   │──│                  │   │
+│  │(stdio/  │  │ workspace_init   │   │
+│  │ SSE/    │  │ workspace_status │   │
+│  │ HTTP)   │  │ worktree_add     │   │
+│  └─────────┘  │ flow_feature_*   │   │
+│               │ spec_new         │   │
+│  ┌─────────┐  │ build            │   │
+│  │Resource │  │ gate_*           │   │
+│  │Registry │  │ ...              │   │
+│  └─────────┘  └──────────────────┘   │
+│       │                │             │
+│       ▼                ▼             │
+│  ┌──────────────────────────┐        │
+│  │  smctl Core Library      │        │
+│  │  (same logic as CLI)     │        │
+│  └──────────────────────────┘        │
+└──────────────────────────────────────┘
+```
+
+## Implementation: Official Rust MCP SDK (`rmcp`)
+
+smctl uses the **official Rust MCP SDK** — crate [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) — which is maintained under the `modelcontextprotocol` GitHub organization (Linux Foundation). This is not a third-party binding; it is the first-party Rust SDK alongside the TypeScript, Python, Go, C#, Java, and Swift SDKs.
+
+**Cargo dependency:**
+```toml
+[dependencies]
+rmcp = { version = "0.8", features = ["server", "transport-stdio", "transport-sse"] }
+tokio = { version = "1", features = ["full"] }
+schemars = "1"       # JSON Schema generation for tool input schemas
+```
+
+**Server pattern (from rmcp):**
+```rust
+use rmcp::{ServiceExt, transport::stdio};
+
+// SmctlServer implements ServerHandler with #[tool_handler] macros
+let service = SmctlServer::new(workspace)
+    .serve(stdio())
+    .await?;
+
+service.waiting().await?;
+```
+
+**Tool registration uses `#[tool]` attribute macros:**
+```rust
+use rmcp::handler::{tool_handler, prompt_handler};
+
+#[tool_handler]
+impl ServerHandler for SmctlServer {
+    // Each #[tool] method becomes an MCP tool
+    #[tool(description = "Create linked worktrees for parallel feature development")]
+    async fn worktree_add(&self, name: String, repos: Option<Vec<String>>) -> CallToolResult {
+        // delegates to smctl-worktree core logic
+    }
+
+    #[tool(description = "Start a feature branch across repos")]
+    async fn flow_feature_start(&self, name: String, worktree: Option<bool>) -> CallToolResult {
+        // delegates to smctl-flow core logic
+    }
+}
+```
+
+**Key `rmcp` features used:**
+- `#[tool]` / `#[tool_handler]` — Declarative tool registration with auto-generated JSON Schema from Rust types
+- `schemars` derive — Input parameter schemas generated at compile time
+- `stdio()` transport — Standard stdin/stdout for Claude Code, Cursor, etc.
+- `SseServer` transport — HTTP SSE for remote/web clients
+- `ServerHandler` trait — Unified handler for tools, resources, and prompts
+- Resource subscription via `notifications/resources/updated`
+
+## Transport Modes
+
+### stdio (default)
+
+```bash
+smctl serve --mcp --stdio
+```
+
+The MCP server reads JSON-RPC messages from stdin and writes responses to stdout. This is the standard transport for local AI tools.
+
+### SSE (Server-Sent Events)
+
+```bash
+smctl serve --mcp --sse --port 3100
+```
+
+Starts an HTTP server. The client connects via SSE for server-to-client messages and POST for client-to-server messages. Useful for web-based or remote AI assistants.
+
+### Streamable HTTP
+
+```bash
+smctl serve --mcp --http --port 3100
+```
+
+Uses the newer MCP streamable HTTP transport where both directions use HTTP requests.
+
+## Server Capabilities
+
+The MCP server advertises the following capabilities during initialization:
+
+```json
+{
+  "capabilities": {
+    "tools": {},
+    "resources": {
+      "subscribe": true,
+      "listChanged": true
+    },
+    "logging": {}
+  },
+  "serverInfo": {
+    "name": "smctl",
+    "version": "0.1.0"
+  }
+}
+```
+
+## MCP Tools
+
+Each CLI subcommand maps to an MCP tool. Tools accept JSON parameters and return structured JSON results. Input schemas are auto-generated from Rust types via `schemars` at compile time (see rmcp implementation above).
+
+| MCP Tool Name | Description |
+|---|---|
+| `smctl_workspace_init` | Initialize a SmallAIOS multi-repo workspace |
+| `smctl_workspace_status` | Show status of all repos in the workspace |
+| `smctl_worktree_add` | Create linked worktrees for parallel feature development |
+| `smctl_worktree_list` | List active worktree sets with branch and status info |
+| `smctl_worktree_remove` | Remove a worktree set and optionally clean up branches |
+| `smctl_flow_feature_start` | Create a feature branch across repos, optionally with worktree |
+| `smctl_flow_feature_finish` | Merge feature into develop across repos |
+| `smctl_flow_release_start` | Create a release branch from develop in all repos |
+| `smctl_flow_release_finish` | Finalize release: merge to main+develop, tag, changelog |
+| `smctl_flow_hotfix_start` | Start hotfix branch from main |
+| `smctl_flow_hotfix_finish` | Merge hotfix to main + develop |
+| `smctl_spec_new` | Create a new OpenSpec feature folder with scaffolded documents |
+| `smctl_spec_status` | Show spec progress: tasks done/total, open questions, linked branches |
+| `smctl_spec_validate` | Check spec completeness: required files, design decisions, tasks |
+| `smctl_spec_archive` | Archive a completed spec to openspec/changes/archive/ |
+| `smctl_build` | Build repos in dependency order |
+| `smctl_gate_status` | Show ModelGate instance health and status |
+| `smctl_gate_models_list` | List registered ONNX models |
+| `smctl_gate_models_add` | Register a new ONNX model with ModelGate |
+| `smctl_gate_test` | Run test inference against a registered model |
+
+## MCP Resources
+
+Resources provide read-only context that AI assistants can inspect.
+
+| URI Pattern | Description | MIME Type |
+|---|---|---|
+| `smctl://workspace/config` | Current workspace.toml | `application/toml` |
+| `smctl://workspace/status` | Repo statuses JSON | `application/json` |
+| `smctl://worktree/list` | Active worktrees JSON | `application/json` |
+| `smctl://flow/branches` | All flow branches | `application/json` |
+| `smctl://spec/list` | All specs with status | `application/json` |
+| `smctl://spec/{name}/proposal` | Proposal markdown | `text/markdown` |
+| `smctl://spec/{name}/design` | Design markdown | `text/markdown` |
+| `smctl://spec/{name}/tasks` | Tasks markdown | `text/markdown` |
+| `smctl://spec/{name}/status` | Task completion JSON | `application/json` |
+| `smctl://gate/models` | Registered models | `application/json` |
+| `smctl://gate/routes` | Routing table | `application/json` |
+
+Resources support subscription. When workspace state changes (branch switch, spec update, build completion), the server emits `notifications/resources/updated` so the AI assistant stays current.
+
+## Client Configuration
+
+### Claude Code
+
+Add to project `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "smctl": {
+      "command": "smctl",
+      "args": ["serve", "--mcp", "--stdio"]
+    }
+  }
+}
+```
+
+Or to `~/.claude/claude_desktop_config.json` for global availability.
+
+### Cursor
+
+Add to `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "smctl": {
+      "command": "smctl",
+      "args": ["serve", "--mcp", "--stdio"]
+    }
+  }
+}
+```
+
+### Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "smctl": {
+      "command": "smctl",
+      "args": ["serve", "--mcp", "--stdio"]
+    }
+  }
+}
+```
+
+### Remote / Web-based Assistants
+
+For assistants that cannot use stdio, start the SSE server:
+```bash
+smctl serve --mcp --sse --port 3100
+```
+
+The client connects to `http://localhost:3100/sse` for the event stream and POSTs to `http://localhost:3100/messages` for requests.
+
+## Security Considerations
+
+- **Destructive operations:** Tools that delete branches, force-merge, or remove worktrees should include confirmation metadata. MCP clients that support user approval prompts will display these.
+- **File system access:** The MCP server operates within the workspace directory. It does not access files outside the workspace root.
+- **No credentials in responses:** Tool results must not include git credentials, tokens, or secrets.
+- **Logging:** All MCP tool invocations are logged (at info level) for auditability. Use `SMCTL_LOG=debug` for full request/response logging.
+
+## Error Handling
+
+MCP tool errors follow JSON-RPC 2.0 error format:
+
+```json
+{
+  "error": {
+    "code": -32000,
+    "message": "Feature branch 'foo' does not exist in repo SmallAIOS",
+    "data": {
+      "repo": "SmallAIOS",
+      "branch": "feature/foo",
+      "suggestion": "Run smctl_flow_feature_start first"
+    }
+  }
+}
+```
+
+Error codes:
+- `-32000` — General smctl error
+- `-32001` — Workspace not initialized
+- `-32002` — Git operation failed
+- `-32003` — Spec validation failed
+- `-32004` — Build failed
+- `-32005` — ModelGate connection error
