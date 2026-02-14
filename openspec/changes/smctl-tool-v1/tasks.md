@@ -32,7 +32,7 @@
 - [x] Implement `smctl flow release start` / `finish` with tagging
 - [x] Implement `smctl flow hotfix start` / `finish`
 - [x] Implement cross-repo two-phase validate-then-execute pattern
-- [ ] Implement merge conflict detection, `--repos` filter
+- [x] Implement merge conflict detection, `--repos` filter
 - [x] Write integration tests for feature and release lifecycles
 
 ## OpenSpec Integration (`smctl-spec`)
@@ -49,7 +49,7 @@
 - [x] Define per-repo build/test commands in workspace.toml schema
 - [x] Implement dependency graph resolution from `depends_on` fields
 - [x] Implement `smctl build` with `--test`, `--clean` flags
-- [ ] Wire up `--parallel` flag for concurrent builds
+- [x] Wire up `--parallel` flag for concurrent builds
 - [x] Write unit tests for build ordering
 
 ## ModelGate Control (`smctl-gate`) — Deferred
@@ -83,10 +83,10 @@
 
 ## Verify
 
-- [x] All unit tests pass (51 tests)
+- [x] All unit tests pass (59 tests)
 - [x] `smctl workspace init` → `status` works end-to-end (integration test)
 - [x] `smctl flow feature start` → `finish` works across multiple repos (integration test)
-- [ ] `smctl worktree add` → `list` → `remove` lifecycle works (needs integration test)
+- [x] `smctl worktree add` → `list` → `remove` lifecycle works (integration test)
 - [x] `smctl spec new` → `validate` → `archive` lifecycle works
 - [x] `smctl build` correctly orders dependencies
 - [ ] `smctl serve --mcp --stdio` responds to MCP initialize handshake (deferred)
