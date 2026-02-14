@@ -1063,7 +1063,7 @@ async fn run(cli: Cli) -> Result<i32> {
 
         Commands::Build {
             repo,
-            parallel: _,
+            parallel,
             test,
             clean,
             verify: _,
@@ -1079,7 +1079,11 @@ async fn run(cli: Cli) -> Result<i32> {
                 return Ok(exit_code::DRY_RUN);
             }
 
-            let report = smctl_build::build(&root, &manifest, repo.as_deref(), test, clean)?;
+            let report = if parallel {
+                smctl_build::build_parallel(&root, &manifest, repo.as_deref(), test, clean)?
+            } else {
+                smctl_build::build(&root, &manifest, repo.as_deref(), test, clean)?
+            };
 
             println!(
                 "{}",

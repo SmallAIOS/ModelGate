@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -65,7 +67,38 @@ pub fn resolve_build_order(manifest: &WorkspaceManifest) -> Result<Vec<&RepoConf
     Ok(order.into_iter().map(|i| &repos[i]).collect())
 }
 
-/// Build repos in dependency order.
+/// Compute build levels: groups of repos that can be built concurrently.
+/// Each level contains repos whose dependencies are all in earlier levels.
+pub fn resolve_build_levels(manifest: &WorkspaceManifest) -> Result<Vec<Vec<&RepoConfig>>> {
+    let order = resolve_build_order(manifest)?;
+    let mut levels: Vec<Vec<&RepoConfig>> = Vec::new();
+    let mut assigned: HashSet<&str> = HashSet::new();
+
+    // Assign each repo to the earliest level where all deps are satisfied
+    for repo in &order {
+        let level = repo
+            .depends_on
+            .iter()
+            .filter_map(|dep| {
+                levels
+                    .iter()
+                    .position(|lvl| lvl.iter().any(|r| r.name == *dep))
+            })
+            .max()
+            .map(|l| l + 1)
+            .unwrap_or(0);
+
+        if level >= levels.len() {
+            levels.resize_with(level + 1, Vec::new);
+        }
+        levels[level].push(repo);
+        assigned.insert(&repo.name);
+    }
+
+    Ok(levels)
+}
+
+/// Build repos in dependency order (sequential).
 pub fn build(
     root: &Path,
     manifest: &WorkspaceManifest,
@@ -73,12 +106,38 @@ pub fn build(
     run_tests: bool,
     clean_first: bool,
 ) -> Result<BuildReport> {
-    let build_order = resolve_build_order(manifest)?;
+    build_inner(root, manifest, repo_name, run_tests, clean_first, false)
+}
+
+/// Build repos with optional parallelism.
+pub fn build_parallel(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    repo_name: Option<&str>,
+    run_tests: bool,
+    clean_first: bool,
+) -> Result<BuildReport> {
+    build_inner(root, manifest, repo_name, run_tests, clean_first, true)
+}
+
+fn build_inner(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    repo_name: Option<&str>,
+    run_tests: bool,
+    clean_first: bool,
+    parallel: bool,
+) -> Result<BuildReport> {
     let start = std::time::Instant::now();
+
+    if parallel {
+        return build_parallel_impl(root, manifest, repo_name, run_tests, clean_first, start);
+    }
+
+    let build_order = resolve_build_order(manifest)?;
 
     let repos_to_build: Vec<_> = match repo_name {
         Some(name) => {
-            // Build specific repo + its dependencies
             let _target = manifest
                 .find_repo(name)
                 .with_context(|| format!("repo '{name}' not found"))?;
@@ -97,23 +156,7 @@ pub fn build(
             run_cmd(root, repo, cmd)?;
         }
 
-        let build_cmd = repo.build_cmd.as_deref().unwrap_or("cargo build");
-        let result = run_cmd(root, repo, build_cmd);
-        let build_result = match result {
-            Ok(output) => BuildResult {
-                repo_name: repo.name.clone(),
-                success: true,
-                output,
-                duration_ms: 0,
-            },
-            Err(e) => BuildResult {
-                repo_name: repo.name.clone(),
-                success: false,
-                output: e.to_string(),
-                duration_ms: 0,
-            },
-        };
-
+        let build_result = build_one_repo(root, repo);
         let build_ok = build_result.success;
         results.push(build_result);
 
@@ -122,21 +165,7 @@ pub fn build(
         }
 
         if run_tests {
-            let test_cmd = repo.test_cmd.as_deref().unwrap_or("cargo test");
-            let test_result = match run_cmd(root, repo, test_cmd) {
-                Ok(output) => BuildResult {
-                    repo_name: format!("{} (test)", repo.name),
-                    success: true,
-                    output,
-                    duration_ms: 0,
-                },
-                Err(e) => BuildResult {
-                    repo_name: format!("{} (test)", repo.name),
-                    success: false,
-                    output: e.to_string(),
-                    duration_ms: 0,
-                },
-            };
+            let test_result = test_one_repo(root, repo);
             let test_ok = test_result.success;
             results.push(test_result);
             if !test_ok {
@@ -151,6 +180,132 @@ pub fn build(
         total_duration_ms: start.elapsed().as_millis() as u64,
         all_passed,
     })
+}
+
+fn build_parallel_impl(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    repo_name: Option<&str>,
+    run_tests: bool,
+    clean_first: bool,
+    start: std::time::Instant,
+) -> Result<BuildReport> {
+    let levels = resolve_build_levels(manifest)?;
+
+    // Filter levels if building a specific repo
+    let target_repos: Option<HashSet<String>> = repo_name.map(|name| {
+        let mut set: HashSet<String> = collect_deps(manifest, name).into_iter().collect();
+        set.insert(name.to_string());
+        set
+    });
+
+    let results = Mutex::new(Vec::new());
+    let failed = Mutex::new(false);
+
+    for level in &levels {
+        // Skip if already failed
+        if *failed.lock().unwrap() {
+            break;
+        }
+
+        let repos_in_level: Vec<_> = level
+            .iter()
+            .filter(|r| {
+                target_repos
+                    .as_ref()
+                    .is_none_or(|targets| targets.contains(&r.name))
+            })
+            .collect();
+
+        if repos_in_level.is_empty() {
+            continue;
+        }
+
+        std::thread::scope(|s| {
+            let handles: Vec<_> = repos_in_level
+                .iter()
+                .map(|repo| {
+                    s.spawn(|| {
+                        if *failed.lock().unwrap() {
+                            return;
+                        }
+
+                        if clean_first && let Some(cmd) = &repo.clean_cmd {
+                            let _ = run_cmd(root, repo, cmd);
+                        }
+
+                        let build_result = build_one_repo(root, repo);
+                        let build_ok = build_result.success;
+                        results.lock().unwrap().push(build_result);
+
+                        if !build_ok {
+                            *failed.lock().unwrap() = true;
+                            return;
+                        }
+
+                        if run_tests {
+                            let test_result = test_one_repo(root, repo);
+                            let test_ok = test_result.success;
+                            results.lock().unwrap().push(test_result);
+                            if !test_ok {
+                                *failed.lock().unwrap() = true;
+                            }
+                        }
+                    })
+                })
+                .collect();
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        });
+    }
+
+    let results = results.into_inner().unwrap();
+    let all_passed = results.iter().all(|r| r.success);
+    Ok(BuildReport {
+        results,
+        total_duration_ms: start.elapsed().as_millis() as u64,
+        all_passed,
+    })
+}
+
+fn build_one_repo(root: &Path, repo: &RepoConfig) -> BuildResult {
+    let build_cmd = repo.build_cmd.as_deref().unwrap_or("cargo build");
+    let repo_start = std::time::Instant::now();
+    match run_cmd(root, repo, build_cmd) {
+        Ok(output) => BuildResult {
+            repo_name: repo.name.clone(),
+            success: true,
+            output,
+            duration_ms: repo_start.elapsed().as_millis() as u64,
+        },
+        Err(e) => BuildResult {
+            repo_name: repo.name.clone(),
+            success: false,
+            output: e.to_string(),
+            duration_ms: repo_start.elapsed().as_millis() as u64,
+        },
+    }
+}
+
+fn test_one_repo(root: &Path, repo: &RepoConfig) -> BuildResult {
+    let test_cmd = repo.test_cmd.as_deref().unwrap_or("cargo test");
+    let repo_start = std::time::Instant::now();
+    match run_cmd(root, repo, test_cmd) {
+        Ok(output) => BuildResult {
+            repo_name: format!("{} (test)", repo.name),
+            success: true,
+            output,
+            duration_ms: repo_start.elapsed().as_millis() as u64,
+        },
+        Err(e) => BuildResult {
+            repo_name: format!("{} (test)", repo.name),
+            success: false,
+            output: e.to_string(),
+            duration_ms: repo_start.elapsed().as_millis() as u64,
+        },
+    }
 }
 
 fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
@@ -264,5 +419,95 @@ mod tests {
         let deps = collect_deps(&manifest, "C");
         assert!(deps.contains(&"A".to_string()));
         assert!(deps.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_build_levels() {
+        let manifest = make_manifest();
+        let levels = resolve_build_levels(&manifest).unwrap();
+        // Level 0: A (no deps)
+        // Level 1: B (depends on A)
+        // Level 2: C (depends on A, B)
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0].len(), 1);
+        assert_eq!(levels[0][0].name, "A");
+        assert_eq!(levels[1].len(), 1);
+        assert_eq!(levels[1][0].name, "B");
+        assert_eq!(levels[2].len(), 1);
+        assert_eq!(levels[2][0].name, "C");
+    }
+
+    #[test]
+    fn test_resolve_build_levels_parallel_repos() {
+        // D and E both depend only on A, so they should be in the same level
+        let manifest = WorkspaceManifest::parse(
+            r#"
+            [workspace]
+            name = "test"
+
+            [[repos]]
+            name = "A"
+            url = "https://example.com/a"
+            depends_on = []
+
+            [[repos]]
+            name = "D"
+            url = "https://example.com/d"
+            depends_on = ["A"]
+
+            [[repos]]
+            name = "E"
+            url = "https://example.com/e"
+            depends_on = ["A"]
+
+            [[repos]]
+            name = "F"
+            url = "https://example.com/f"
+            depends_on = ["D", "E"]
+            "#,
+        )
+        .unwrap();
+
+        let levels = resolve_build_levels(&manifest).unwrap();
+        assert_eq!(levels.len(), 3);
+        // Level 0: A
+        assert_eq!(levels[0].len(), 1);
+        assert_eq!(levels[0][0].name, "A");
+        // Level 1: D and E (parallel)
+        assert_eq!(levels[1].len(), 2);
+        let l1_names: HashSet<_> = levels[1].iter().map(|r| r.name.as_str()).collect();
+        assert!(l1_names.contains("D"));
+        assert!(l1_names.contains("E"));
+        // Level 2: F
+        assert_eq!(levels[2].len(), 1);
+        assert_eq!(levels[2][0].name, "F");
+    }
+
+    #[test]
+    fn test_resolve_build_levels_no_deps() {
+        // All repos independent: should all be in level 0
+        let manifest = WorkspaceManifest::parse(
+            r#"
+            [workspace]
+            name = "test"
+
+            [[repos]]
+            name = "X"
+            url = "https://example.com/x"
+
+            [[repos]]
+            name = "Y"
+            url = "https://example.com/y"
+
+            [[repos]]
+            name = "Z"
+            url = "https://example.com/z"
+            "#,
+        )
+        .unwrap();
+
+        let levels = resolve_build_levels(&manifest).unwrap();
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].len(), 3);
     }
 }
