@@ -41,7 +41,7 @@
 - [x] Create document templates (proposal.md, design.md, tasks.md scaffolds)
 - [x] Implement `smctl spec ff` / `apply` / `validate` / `status` / `list`
 - [x] Implement `smctl spec archive` — move to archive
-- [ ] Bind spec new → flow feature start; spec archive → flow feature finish
+- [x] Bind spec new → flow feature start; spec archive → flow feature finish
 - [x] Write unit tests for spec lifecycle
 
 ## Build Orchestration (`smctl-build`)

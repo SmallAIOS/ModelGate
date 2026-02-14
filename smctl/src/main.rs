@@ -853,6 +853,23 @@ async fn run(cli: Cli) -> Result<i32> {
                             format!("created spec '{}' at {}", i.name, i.path.display())
                         })
                     );
+
+                    // Auto-create feature branch if workspace is available
+                    if let Ok(root) = resolve_root() {
+                        if let Ok(manifest) =
+                            smctl_workspace::WorkspaceManifest::load_from_root(&root)
+                        {
+                            match smctl_flow::feature_start(&root, &manifest, &name, None) {
+                                Ok(result) => {
+                                    println!("created branch '{}'", result.branch_name);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("could not auto-create branch: {e}");
+                                }
+                            }
+                        }
+                    }
+
                     Ok(exit_code::SUCCESS)
                 }
                 SpecCommands::Validate { name } => {
@@ -943,6 +960,23 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
                     let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
                     println!("archived spec '{}' to {}", spec_name, dest.display());
+
+                    // Auto-finish feature branch if workspace is available
+                    if let Ok(root) = resolve_root() {
+                        if let Ok(manifest) =
+                            smctl_workspace::WorkspaceManifest::load_from_root(&root)
+                        {
+                            match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
+                                Ok(result) => {
+                                    println!("merged branch '{}' into develop", result.branch_name);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("could not auto-finish branch: {e}");
+                                }
+                            }
+                        }
+                    }
+
                     Ok(exit_code::SUCCESS)
                 }
                 SpecCommands::Ff { name } => {

@@ -427,11 +427,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         new_spec(dir.path(), "bad-spec").unwrap();
         // Overwrite proposal.md with empty content
-        std::fs::write(
-            dir.path().join("changes/bad-spec/proposal.md"),
-            "# Empty\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("changes/bad-spec/proposal.md"), "# Empty\n").unwrap();
         let result = validate(dir.path(), "bad-spec").unwrap();
         assert!(!result.valid);
         assert!(result.issues.iter().any(|i| i.contains("Why")));
