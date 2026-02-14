@@ -5,6 +5,24 @@ All notable changes to ModelGate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-02-13
+
+### Added
+
+- **Integration tests** — 27 new tests using real git repos for workspace init/status, flow feature start/finish, and CLI end-to-end (51 tests total)
+- **README.md** — installation, quickstart, subcommand reference, workspace.toml reference
+- **CLI tests** — 16 assert_cmd tests covering workspace, spec, config, alias, and completions commands
+
+### Fixed
+
+- **`release` subcommand `version` arg** — renamed to avoid clap conflict with `--version` flag
+
+### Changed
+
+- Updated task tracking: 43 of 57 tasks now complete
+
+[0.1.2]: https://github.com/SmallAIOS/ModelGate/compare/v0.1.1...v0.1.2
+
 ## [0.1.1] - 2026-02-13
 
 ### Added

@@ -238,16 +238,18 @@ enum FeatureCommands {
 enum ReleaseCommands {
     /// Create a release branch from develop
     Start {
-        /// Version string
-        version: String,
+        /// Version string (e.g. "1.0.0")
+        #[arg(value_name = "VERSION")]
+        ver: String,
         /// Limit to specific repos
         #[arg(long, value_delimiter = ',')]
         repos: Option<Vec<String>>,
     },
     /// Merge release into main + develop, tag
     Finish {
-        /// Version string
-        version: String,
+        /// Version string (e.g. "1.0.0")
+        #[arg(value_name = "VERSION")]
+        ver: String,
     },
     /// List active releases
     List,
@@ -717,17 +719,17 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
             },
             FlowCommands::Release { command } => match command {
-                ReleaseCommands::Start { version, repos } => {
+                ReleaseCommands::Start { ver, repos } => {
                     let root = resolve_root()?;
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would start release '{version}'");
+                        println!("would start release '{ver}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
                     let result =
-                        smctl_flow::release_start(&root, &manifest, &version, repos.as_deref())?;
+                        smctl_flow::release_start(&root, &manifest, &ver, repos.as_deref())?;
                     println!(
                         "{}",
                         format_output_with(&result, fmt, |r| {
@@ -736,16 +738,16 @@ async fn run(cli: Cli) -> Result<i32> {
                     );
                     Ok(exit_code::SUCCESS)
                 }
-                ReleaseCommands::Finish { version } => {
+                ReleaseCommands::Finish { ver } => {
                     let root = resolve_root()?;
                     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
                     if dry_run {
-                        println!("would finish release '{version}'");
+                        println!("would finish release '{ver}'");
                         return Ok(exit_code::DRY_RUN);
                     }
 
-                    let result = smctl_flow::release_finish(&root, &manifest, &version)?;
+                    let result = smctl_flow::release_finish(&root, &manifest, &ver)?;
                     println!(
                         "{}",
                         format_output_with(&result, fmt, |r| {
