@@ -855,17 +855,16 @@ async fn run(cli: Cli) -> Result<i32> {
                     );
 
                     // Auto-create feature branch if workspace is available
-                    if let Ok(root) = resolve_root() {
-                        if let Ok(manifest) =
+                    if let Ok(root) = resolve_root()
+                        && let Ok(manifest) =
                             smctl_workspace::WorkspaceManifest::load_from_root(&root)
-                        {
-                            match smctl_flow::feature_start(&root, &manifest, &name, None) {
-                                Ok(result) => {
-                                    println!("created branch '{}'", result.branch_name);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("could not auto-create branch: {e}");
-                                }
+                    {
+                        match smctl_flow::feature_start(&root, &manifest, &name, None) {
+                            Ok(result) => {
+                                println!("created branch '{}'", result.branch_name);
+                            }
+                            Err(e) => {
+                                tracing::warn!("could not auto-create branch: {e}");
                             }
                         }
                     }
@@ -962,17 +961,16 @@ async fn run(cli: Cli) -> Result<i32> {
                     println!("archived spec '{}' to {}", spec_name, dest.display());
 
                     // Auto-finish feature branch if workspace is available
-                    if let Ok(root) = resolve_root() {
-                        if let Ok(manifest) =
+                    if let Ok(root) = resolve_root()
+                        && let Ok(manifest) =
                             smctl_workspace::WorkspaceManifest::load_from_root(&root)
-                        {
-                            match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
-                                Ok(result) => {
-                                    println!("merged branch '{}' into develop", result.branch_name);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("could not auto-finish branch: {e}");
-                                }
+                    {
+                        match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
+                            Ok(result) => {
+                                println!("merged branch '{}' into develop", result.branch_name);
+                            }
+                            Err(e) => {
+                                tracing::warn!("could not auto-finish branch: {e}");
                             }
                         }
                     }
