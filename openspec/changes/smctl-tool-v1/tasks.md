@@ -5,7 +5,7 @@
 - [x] Initialize Cargo workspace with `smctl` binary crate and clap derive API
 - [x] Add `--json` and `--dry-run` global flags with formatter/execution traits
 - [x] Configure CI (GitHub Actions): build, test, clippy, fmt
-- [ ] Set up integration test harness (temp git repos)
+- [x] Set up integration test harness (temp git repos)
 - [x] Create `.smctl/` config directory structure and shell completions
 
 ## Workspace Management (`smctl-workspace`)
@@ -33,7 +33,7 @@
 - [x] Implement `smctl flow hotfix start` / `finish`
 - [x] Implement cross-repo two-phase validate-then-execute pattern
 - [ ] Implement merge conflict detection, `--repos` filter
-- [ ] Write integration tests for feature and release lifecycles
+- [x] Write integration tests for feature and release lifecycles
 
 ## OpenSpec Integration (`smctl-spec`)
 
@@ -78,14 +78,14 @@
 
 ## Documentation
 
-- [ ] Write README.md with installation, quickstart, and workspace.toml reference
+- [x] Write README.md with installation, quickstart, and workspace.toml reference
 - [ ] Document MCP integration guide for Claude Code, Cursor, Windsurf
 
 ## Verify
 
-- [x] All unit tests pass (24 tests)
-- [ ] `smctl workspace init` → `status` works end-to-end (needs integration test)
-- [ ] `smctl flow feature start` → `finish` works across multiple repos (needs integration test)
+- [x] All unit tests pass (51 tests)
+- [x] `smctl workspace init` → `status` works end-to-end (integration test)
+- [x] `smctl flow feature start` → `finish` works across multiple repos (integration test)
 - [ ] `smctl worktree add` → `list` → `remove` lifecycle works (needs integration test)
 - [x] `smctl spec new` → `validate` → `archive` lifecycle works
 - [x] `smctl build` correctly orders dependencies
