@@ -945,12 +945,83 @@ async fn run(cli: Cli) -> Result<i32> {
                     println!("archived spec '{}' to {}", spec_name, dest.display());
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Ff { name: _ } => {
-                    println!("spec ff: not yet implemented");
-                    Ok(exit_code::SUCCESS)
+                SpecCommands::Ff { name } => {
+                    let spec_name = name.context("spec name required")?;
+
+                    // Validate document completeness
+                    let result = smctl_spec::validate(&openspec_dir, &spec_name)?;
+                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
+
+                    println!("spec: {spec_name}");
+                    println!("phase: {:?}", info.phase);
+                    println!(
+                        "documents: proposal={} design={} tasks={}",
+                        if info.has_proposal { "ok" } else { "MISSING" },
+                        if info.has_design { "ok" } else { "MISSING" },
+                        if info.has_tasks { "ok" } else { "MISSING" },
+                    );
+                    println!("tasks: {}/{} complete", info.tasks_done, info.tasks_total);
+
+                    if result.valid {
+                        println!("validation: PASS");
+                        if info.tasks_total > 0 && info.tasks_done == info.tasks_total {
+                            println!("ready to archive");
+                        } else {
+                            println!("{} task(s) remaining", info.tasks_total - info.tasks_done);
+                        }
+                        Ok(exit_code::SUCCESS)
+                    } else {
+                        println!("validation: FAIL");
+                        for issue in &result.issues {
+                            println!("  - {issue}");
+                        }
+                        Ok(exit_code::GENERAL_ERROR)
+                    }
                 }
-                SpecCommands::Apply { name: _ } => {
-                    println!("spec apply: not yet implemented");
+                SpecCommands::Apply { name } => {
+                    let spec_name = name.context("spec name required")?;
+                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
+
+                    if !info.has_tasks {
+                        anyhow::bail!("spec '{spec_name}' has no tasks.md");
+                    }
+
+                    let tasks_path = info.path.join("tasks.md");
+                    let content = std::fs::read_to_string(&tasks_path)?;
+
+                    let mut pending = Vec::new();
+                    let mut done = Vec::new();
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+                            done.push(
+                                trimmed
+                                    .trim_start_matches("- [x] ")
+                                    .trim_start_matches("- [X] ")
+                                    .to_string(),
+                            );
+                        } else if trimmed.starts_with("- [ ]") {
+                            pending.push(trimmed.trim_start_matches("- [ ] ").to_string());
+                        }
+                    }
+
+                    println!(
+                        "spec: {spec_name} — {}/{} tasks complete",
+                        done.len(),
+                        done.len() + pending.len()
+                    );
+
+                    if !pending.is_empty() {
+                        println!("\npending ({}):", pending.len());
+                        for (i, task) in pending.iter().enumerate() {
+                            println!("  {}. {task}", i + 1);
+                        }
+                    }
+
+                    if pending.is_empty() {
+                        println!("all tasks complete — ready for archive");
+                    }
+
                     Ok(exit_code::SUCCESS)
                 }
             }
