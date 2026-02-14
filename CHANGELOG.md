@@ -5,6 +5,23 @@ All notable changes to ModelGate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-02-13
+
+### Added
+
+- **GitHub Actions CI** — format check, clippy lint, test, build, and gate jobs
+- **`smctl spec ff`** — fast-forward validation showing document completeness and task progress
+- **`smctl spec apply`** — lists pending and completed tasks from tasks.md
+- **Spec-flow binding** — `spec new` auto-creates feature branch, `spec archive` auto-finishes it
+- 3 new tests for spec phase detection and validation edge cases (24 tests total)
+
+### Changed
+
+- Updated task tracking: 33 of 56 tasks now complete
+- Marked ModelGate Control and MCP Server sections as deferred
+
+[0.1.1]: https://github.com/SmallAIOS/ModelGate/compare/v0.1.0...v0.1.1
+
 ## [0.1.0] - 2026-02-12
 
 Initial release of `smctl` (SmallAIOS Control) CLI tool.
