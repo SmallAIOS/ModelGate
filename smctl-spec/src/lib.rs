@@ -395,4 +395,41 @@ mod tests {
         assert!(dest.exists());
         assert!(!dir.path().join("changes/to-archive").exists());
     }
+
+    #[test]
+    fn test_spec_info_phase_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        new_spec(dir.path(), "draft-spec").unwrap();
+        let info = spec_info(dir.path(), "draft-spec").unwrap();
+        assert_eq!(info.phase, SpecPhase::Draft);
+        // Scaffolded tasks.md has 1 pending task, 0 done
+        assert!(info.tasks_done < info.tasks_total);
+    }
+
+    #[test]
+    fn test_spec_info_phase_active_when_all_done() {
+        let dir = tempfile::tempdir().unwrap();
+        new_spec(dir.path(), "done-spec").unwrap();
+        // Overwrite tasks.md with all tasks completed
+        std::fs::write(
+            dir.path().join("changes/done-spec/tasks.md"),
+            "# Tasks\n- [x] Task one\n- [x] Task two\n",
+        )
+        .unwrap();
+        let info = spec_info(dir.path(), "done-spec").unwrap();
+        assert_eq!(info.phase, SpecPhase::Active);
+        assert_eq!(info.tasks_done, 2);
+        assert_eq!(info.tasks_total, 2);
+    }
+
+    #[test]
+    fn test_validate_missing_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        new_spec(dir.path(), "bad-spec").unwrap();
+        // Overwrite proposal.md with empty content
+        std::fs::write(dir.path().join("changes/bad-spec/proposal.md"), "# Empty\n").unwrap();
+        let result = validate(dir.path(), "bad-spec").unwrap();
+        assert!(!result.valid);
+        assert!(result.issues.iter().any(|i| i.contains("Why")));
+    }
 }
