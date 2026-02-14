@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use smctl_flow::{BranchType, classify_branch, feature_finish, feature_list, feature_start, init};
+use smctl_flow::{
+    BranchType, classify_branch, feature_check_merge, feature_finish, feature_list, feature_start,
+    init,
+};
 use smctl_workspace::WorkspaceManifest;
 
 /// Set up a workspace root with one real git repo that has a main branch.
@@ -297,4 +300,82 @@ fn test_classify_all_branch_types() {
     assert_eq!(classify_branch("release/1.0", &flow), BranchType::Release);
     assert_eq!(classify_branch("hotfix/fix", &flow), BranchType::Hotfix);
     assert_eq!(classify_branch("other", &flow), BranchType::Other);
+}
+
+fn git_commit(repo_path: &std::path::Path, msg: &str) {
+    let cmds: &[&[&str]] = &[
+        &["git", "add", "."],
+        &[
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            msg,
+        ],
+    ];
+    for cmd in cmds {
+        std::process::Command::new(cmd[0])
+            .args(&cmd[1..])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+    }
+}
+
+#[test]
+fn test_merge_conflict_detection_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = setup_workspace(dir.path(), "repo1");
+
+    init(dir.path(), &manifest).unwrap();
+    feature_start(dir.path(), &manifest, "clean-merge", None).unwrap();
+
+    // Make a non-conflicting change on the feature branch
+    let repo_path = dir.path().join("repo1");
+    std::fs::write(repo_path.join("feature.txt"), "feature work\n").unwrap();
+    git_commit(&repo_path, "add feature.txt");
+
+    // Check merge — should be clean
+    let checks = feature_check_merge(dir.path(), &manifest, "clean-merge").unwrap();
+    assert_eq!(checks.len(), 1);
+    assert!(!checks[0].has_conflicts);
+    assert!(checks[0].conflicting_files.is_empty());
+}
+
+#[test]
+fn test_merge_conflict_detection_with_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = setup_workspace(dir.path(), "repo1");
+
+    init(dir.path(), &manifest).unwrap();
+    feature_start(dir.path(), &manifest, "conflicting", None).unwrap();
+
+    let repo_path = dir.path().join("repo1");
+
+    // Modify README on the feature branch
+    std::fs::write(repo_path.join("README.md"), "# Feature version\n").unwrap();
+    git_commit(&repo_path, "modify README on feature");
+
+    // Switch to develop and make a conflicting change
+    std::process::Command::new("git")
+        .args(["checkout", "develop"])
+        .current_dir(&repo_path)
+        .output()
+        .unwrap();
+    std::fs::write(repo_path.join("README.md"), "# Develop version\n").unwrap();
+    git_commit(&repo_path, "modify README on develop");
+
+    // Check merge — should detect conflict
+    let checks = feature_check_merge(dir.path(), &manifest, "conflicting").unwrap();
+    assert_eq!(checks.len(), 1);
+    assert!(checks[0].has_conflicts);
+    assert!(
+        checks[0]
+            .conflicting_files
+            .iter()
+            .any(|f| f.contains("README"))
+    );
 }

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use smctl_workspace::worktree;
 use smctl_workspace::{WorkspaceManifest, add_repo, init_workspace, remove_repo, repo_status};
 
 /// Create a bare git repo and a clone of it within the workspace root.
@@ -167,4 +168,111 @@ fn test_workspace_manifest_roundtrip_with_all_configs() {
     assert_eq!(loaded.flow.develop_branch, "dev");
     assert_eq!(loaded.repos.len(), 2);
     assert_eq!(loaded.repo_names(), vec!["alpha", "beta"]);
+}
+
+/// Helper: set up a workspace with a real git repo for worktree tests.
+fn setup_worktree_workspace(root: &Path) -> WorkspaceManifest {
+    let repo_path = root.join("my-repo");
+    std::fs::create_dir_all(&repo_path).unwrap();
+
+    let cmds: &[&[&str]] = &[&["git", "init"], &["git", "checkout", "-b", "main"]];
+    for cmd in cmds {
+        std::process::Command::new(cmd[0])
+            .args(&cmd[1..])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+    }
+
+    std::fs::write(repo_path.join("README.md"), "# Test\n").unwrap();
+    let cmds: &[&[&str]] = &[
+        &["git", "add", "."],
+        &[
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "init",
+        ],
+    ];
+    for cmd in cmds {
+        std::process::Command::new(cmd[0])
+            .args(&cmd[1..])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+    }
+
+    let toml = r#"
+[workspace]
+name = "wt-test"
+
+[[repos]]
+name = "my-repo"
+url = "file:///tmp/fake"
+path = "my-repo"
+"#;
+    WorkspaceManifest::parse(toml).unwrap()
+}
+
+#[test]
+fn test_worktree_add_list_remove_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = setup_worktree_workspace(dir.path());
+
+    // Add a worktree set
+    let infos =
+        worktree::add_worktree(dir.path(), &manifest, "feature-x", None, "feature/x").unwrap();
+    assert_eq!(infos.len(), 1);
+    assert!(infos[0].exists);
+    assert_eq!(infos[0].branch, "feature/x");
+
+    // List should find it
+    let sets = worktree::list_worktrees(dir.path(), &manifest).unwrap();
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0].name, "feature-x");
+    assert!(sets[0].worktrees[0].exists);
+
+    // The worktree path should exist and be a valid git repo
+    let wt_path = dir
+        .path()
+        .join(&manifest.worktree.base_dir)
+        .join("feature-x")
+        .join("my-repo");
+    assert!(wt_path.exists());
+    let wt_repo = git2::Repository::open(&wt_path).unwrap();
+    let head = wt_repo.head().unwrap();
+    assert_eq!(head.shorthand().unwrap(), "feature/x");
+
+    // Remove the worktree set
+    worktree::remove_worktree(dir.path(), &manifest, "feature-x", false).unwrap();
+
+    // List should be empty
+    let sets = worktree::list_worktrees(dir.path(), &manifest).unwrap();
+    assert!(sets.is_empty());
+}
+
+#[test]
+fn test_worktree_remove_nonexistent_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = setup_worktree_workspace(dir.path());
+
+    assert!(worktree::remove_worktree(dir.path(), &manifest, "nope", false).is_err());
+}
+
+#[test]
+fn test_worktree_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = setup_worktree_workspace(dir.path());
+
+    worktree::add_worktree(dir.path(), &manifest, "wt-path-test", None, "feature/path").unwrap();
+
+    let path = worktree::worktree_path(dir.path(), &manifest, "wt-path-test").unwrap();
+    assert!(path.exists());
+
+    // Non-existent should fail
+    assert!(worktree::worktree_path(dir.path(), &manifest, "nope").is_err());
 }

@@ -190,6 +190,109 @@ pub fn release_list(root: &Path, manifest: &WorkspaceManifest) -> Result<Vec<Bra
     list_branches_by_type(root, manifest, BranchType::Release)
 }
 
+/// Merge conflict check result for a single repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeCheckResult {
+    pub repo_name: String,
+    pub has_conflicts: bool,
+    pub conflicting_files: Vec<String>,
+}
+
+/// Check for merge conflicts before finishing a branch.
+/// Does a dry-run merge (merge --no-commit then abort) to detect conflicts.
+pub fn check_merge_conflicts(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    branch: &str,
+    target: &str,
+) -> Result<Vec<MergeCheckResult>> {
+    let mut results = Vec::new();
+
+    for repo in &manifest.repos {
+        let repo_path = root.join(repo.local_path());
+        let git_repo = match git2::Repository::open(&repo_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        // Check if branch exists
+        if git_repo
+            .find_branch(branch, git2::BranchType::Local)
+            .is_err()
+        {
+            continue;
+        }
+
+        // Save current HEAD
+        let head = git_repo.head().ok();
+        let original_branch = head.as_ref().and_then(|h| h.shorthand()).unwrap_or("HEAD");
+        let original_branch = original_branch.to_string();
+
+        // Checkout target
+        let checkout = std::process::Command::new("git")
+            .args(["checkout", target])
+            .current_dir(&repo_path)
+            .output()?;
+
+        if !checkout.status.success() {
+            continue;
+        }
+
+        // Try merge --no-commit --no-ff
+        let merge = std::process::Command::new("git")
+            .args(["merge", "--no-commit", "--no-ff", branch])
+            .current_dir(&repo_path)
+            .output()?;
+
+        let has_conflicts = !merge.status.success();
+
+        // Collect conflicting files if any
+        let conflicting_files = if has_conflicts {
+            let diff = std::process::Command::new("git")
+                .args(["diff", "--name-only", "--diff-filter=U"])
+                .current_dir(&repo_path)
+                .output()?;
+            String::from_utf8_lossy(&diff.stdout)
+                .lines()
+                .map(|l| l.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Abort the merge
+        let _ = std::process::Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(&repo_path)
+            .output();
+
+        // Restore original branch
+        let _ = std::process::Command::new("git")
+            .args(["checkout", &original_branch])
+            .current_dir(&repo_path)
+            .output();
+
+        results.push(MergeCheckResult {
+            repo_name: repo.name.clone(),
+            has_conflicts,
+            conflicting_files,
+        });
+    }
+
+    Ok(results)
+}
+
+/// Check for merge conflicts when finishing a feature.
+pub fn feature_check_merge(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    name: &str,
+) -> Result<Vec<MergeCheckResult>> {
+    let branch = format!("{}{}", manifest.flow.feature_prefix, name);
+    let target = &manifest.flow.develop_branch;
+    check_merge_conflicts(root, manifest, &branch, target)
+}
+
 // --- Internal helpers ---
 
 fn start_branch(
