@@ -1,0 +1,25 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;}
+  .row{display:flex;gap:12px;margin-bottom:12px;}
+  .sw{flex:1;border:1px solid var(--fg-3);border-radius:4px;overflow:hidden;background:var(--bg-1);}
+  .chip{height:64px;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:12px;letter-spacing:0.08em;text-transform:uppercase;}
+  .meta{padding:8px 10px;font-family:var(--font-mono);font-size:11px;display:flex;justify-content:space-between;}
+  .name{color:var(--fg-0);font-weight:500;} .hex{color:var(--fg-2);}
+  .use{display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--fg-3);border-radius:4px;background:#E9ECFF;}
+  .btn{padding:6px 12px;border-radius:4px;background:#3451FF;color:#fff;font-family:var(--font-sans);font-size:13px;font-weight:500;}
+  .ring{padding:6px 12px;border-radius:4px;background:#fff;color:#0B0C0E;font-family:var(--font-sans);font-size:13px;box-shadow:0 0 0 2px #3451FF, 0 0 0 4px #fff inset;}
+</style></head>
+<body class="ds-root"><div class="card">
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#3451FF;color:#fff;">ion</div><div class="meta"><span class="name">--ion</span><span class="hex">3451FF</span></div></div>
+    <div class="sw"><div class="chip" style="background:#1E34C8;color:#fff;">pressed</div><div class="meta"><span class="name">--ion-2</span><span class="hex">1E34C8</span></div></div>
+    <div class="sw"><div class="chip" style="background:#E9ECFF;color:#3451FF;">selected</div><div class="meta"><span class="name">--ion-bg</span><span class="hex">E9ECFF</span></div></div>
+  </div>
+  <div class="use">
+    <span style="font-family:var(--font-mono);font-size:12px;color:#3451FF;">feature/gpu-accel</span>
+    <span class="btn">Start build</span>
+    <span class="ring">Focused</span>
+  </div>
+</div></body></html>

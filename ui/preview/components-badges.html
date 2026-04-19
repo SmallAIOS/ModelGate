@@ -1,0 +1,31 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;}
+  .b{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:0.04em;text-transform:uppercase;}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .ok{background:#E6F4EC;color:#1F8F4E;}
+  .warn{background:#FBF3E2;color:#B7791F;}
+  .err{background:#F8E5E7;color:#B01E2B;}
+  .info{background:#E6ECF8;color:#1E4FB0;}
+  .neu{background:var(--bg-2);color:var(--fg-1);}
+  .ion{background:#E9ECFF;color:#3451FF;}
+  .sq{border-radius:3px;padding:3px 6px;}
+</style></head>
+<body class="ds-root"><div class="card">
+  <span class="b ok"><span class="dot"></span>clean</span>
+  <span class="b err"><span class="dot"></span>dirty</span>
+  <span class="b ok"><span class="dot"></span>passed</span>
+  <span class="b err"><span class="dot"></span>failed</span>
+  <span class="b warn"><span class="dot"></span>pending</span>
+  <span class="b info"><span class="dot"></span>running</span>
+  <span class="b ok"><span class="dot"></span>verified</span>
+  <span class="b neu"><span class="dot"></span>archived</span>
+  <span class="b ion"><span class="dot"></span>active</span>
+  <span class="b sq neu">+3/-0</span>
+  <span class="b sq neu">ahead 3</span>
+  <span class="b sq neu">behind 0</span>
+  <span class="b sq ion">develop</span>
+  <span class="b sq neu">main</span>
+  <span class="b sq neu">feature/gpu-accel</span>
+</div></body></html>

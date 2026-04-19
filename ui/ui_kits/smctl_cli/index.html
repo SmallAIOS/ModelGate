@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>smctl — UI kit</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style data-screen-label="smctl-terminal">
+  :root {
+    /* Terminal palette — stable regardless of page theme */
+    --term-bg:          #0B0C0E;
+    --term-bg-row:      #1B1D22;
+    --term-fg:          #F3F4F6;
+    --term-muted:       #C7CAD1;
+    --term-dim:         #6A6E78;
+    --term-ok:          #3BCB72;
+    --term-err:         #E56372;
+    --term-warn:        #E0A64A;
+    --term-ion:         #6E83FF;
+    --term-border:      #262930;
+    --term-border-strong: #000;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg-0);
+    font-family: var(--font-sans);
+    color: var(--fg-0);
+    min-height: 100vh;
+  }
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 32px 64px;
+  }
+  .page-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--fg-3);
+  }
+  .page-header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .page-header .kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .page-header .meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-2);
+  }
+  .intro {
+    font-size: 13px;
+    color: var(--fg-1);
+    line-height: 1.55;
+    max-width: 720px;
+    margin: 16px 0 0;
+  }
+  .intro code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 1px 5px;
+    background: var(--bg-2);
+    border: 1px solid var(--fg-4);
+    border-radius: 3px;
+  }
+  @keyframes smctl-blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body data-screen-label="smctl CLI — UI kit">
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <div class="kicker">UI Kit · SmallAIOS</div>
+        <h1 style="margin-top:4px">smctl — terminal control plane</h1>
+      </div>
+      <div class="meta">v0.1.0-alpha</div>
+    </div>
+    <p class="intro">
+      A high-fidelity recreation of the <code>smctl</code> CLI as defined in
+      <code>ModelGate/openspec/changes/smctl-tool-v1</code>. Walk through the
+      canonical flow: inspect the workspace, validate a spec, build in parallel,
+      start a feature, check ModelGate, finish the feature. Keyboard: <span class="ds-kbd">↵</span>
+      to advance, <span class="ds-kbd">←</span> / <span class="ds-kbd">→</span> to step,
+      <span class="ds-kbd">1</span>–<span class="ds-kbd">6</span> to jump.
+    </p>
+    <div id="root"></div>
+  </div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script type="text/babel" src="Terminal.jsx"></script>
+  <script type="text/babel" src="TerminalApp.jsx"></script>
+  <script type="text/babel">
+    ReactDOM.createRoot(document.getElementById('root')).render(<TerminalApp />);
+  </script>
+</body>
+</html>

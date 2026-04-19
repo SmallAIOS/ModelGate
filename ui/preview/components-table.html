@@ -1,0 +1,23 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:0;}
+  table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-variant-numeric:tabular-nums slashed-zero;}
+  th,td{text-align:left;padding:8px 16px;font-size:12px;border-bottom:1px solid var(--fg-4);}
+  th{font-family:var(--font-sans);font-weight:500;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--fg-2);background:var(--bg-1);border-bottom:1px solid var(--fg-3);}
+  tr:hover td{background:var(--bg-2);}
+  tr.sel td{background:#E9ECFF;}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+  .ok{background:#1F8F4E;} .err{background:#B01E2B;} .warn{background:#B7791F;}
+  td.num{text-align:right;}
+</style></head>
+<body class="ds-root"><div class="card">
+  <table>
+    <thead><tr><th>Repo</th><th>Branch</th><th>State</th><th class="num">Ahead</th><th class="num">Behind</th></tr></thead>
+    <tbody>
+      <tr class="sel"><td>SmallAIOS</td><td>develop</td><td><span class="dot ok"></span>clean</td><td class="num">3</td><td class="num">0</td></tr>
+      <tr><td>ModelGate</td><td>develop</td><td><span class="dot err"></span>dirty · 2</td><td class="num">0</td><td class="num">1</td></tr>
+      <tr><td>ModelGate</td><td>feature/gpu-accel</td><td><span class="dot warn"></span>detached</td><td class="num">7</td><td class="num">0</td></tr>
+    </tbody>
+  </table>
+</div></body></html>
