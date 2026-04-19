@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" fill="none">
+  <g transform="translate(56 8)">
+    <g stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter">
+      <rect x="4" y="4" width="40" height="40" rx="3"></rect>
+      <path d="M14 14 H34 M14 24 H24 M24 24 V34 H34"></path>
+    </g>
+    <g fill="currentColor" stroke="none">
+      <circle cx="14" cy="14" r="1.5"></circle><circle cx="34" cy="14" r="1.5"></circle>
+      <circle cx="14" cy="24" r="1.5"></circle><circle cx="24" cy="24" r="1.5"></circle>
+      <circle cx="24" cy="34" r="1.5"></circle><circle cx="34" cy="34" r="1.5"></circle>
+    </g>
+  </g>
+  <text x="80" y="82" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.3" fill="currentColor">SmallAIOS</text>
+  <text x="80" y="104" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="0.15em" fill="currentColor" opacity="0.6">MODELGATE / SMCTL</text>
+</svg>

@@ -1,0 +1,27 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+  .btn{font-family:var(--font-sans);font-size:13px;padding:7px 14px;border-radius:4px;border:1px solid transparent;cursor:pointer;font-weight:500;line-height:1;}
+  .primary{background:#3451FF;color:#fff;}
+  .primary:hover{background:#1E34C8;}
+  .secondary{background:var(--bg-1);color:var(--fg-0);border-color:var(--fg-3);}
+  .ghost{background:transparent;color:var(--fg-0);}
+  .danger{background:#B01E2B;color:#fff;}
+  .small{font-size:12px;padding:5px 10px;}
+  .icon{padding:6px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;background:var(--bg-1);border:1px solid var(--fg-3);border-radius:4px;}
+  .icon svg{width:14px;height:14px;}
+  .focused{box-shadow:0 0 0 2px var(--ion);}
+  .kbd{font-family:var(--font-mono);font-size:11px;padding:2px 5px;border:1px solid var(--fg-3);border-radius:3px;background:var(--bg-1);color:var(--fg-1);}
+</style></head>
+<body class="ds-root"><div class="card">
+  <button class="btn primary">Start build</button>
+  <button class="btn primary focused">Focused</button>
+  <button class="btn secondary">Cancel</button>
+  <button class="btn ghost">View log</button>
+  <button class="btn danger">Force remove</button>
+  <button class="btn secondary small">Dry run</button>
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 12,15 18,9"/></svg></span>
+  <span class="kbd">⌘K</span>
+  <span class="kbd">y</span>
+</div></body></html>

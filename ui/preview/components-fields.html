@@ -1,0 +1,21 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;display:flex;flex-direction:column;gap:12px;}
+  .f{display:flex;flex-direction:column;gap:4px;}
+  label{font-family:var(--font-sans);font-size:12px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:var(--fg-2);}
+  input,select{font-family:var(--font-mono);font-size:13px;padding:7px 10px;background:var(--bg-1);border:1px solid var(--fg-3);border-radius:4px;color:var(--fg-0);outline:none;}
+  input:focus{border-color:var(--ion);box-shadow:0 0 0 2px rgba(52,81,255,0.2);}
+  .row{display:flex;gap:12px;}
+  .row .f{flex:1;}
+  .hint{font-family:var(--font-mono);font-size:11px;color:var(--fg-2);}
+  .err input{border-color:#B01E2B;}
+  .err .hint{color:#B01E2B;}
+</style></head>
+<body class="ds-root"><div class="card">
+  <div class="f"><label>Feature name</label><input value="gpu-accel" /><span class="hint">will create feature/gpu-accel in 2 repos</span></div>
+  <div class="row">
+    <div class="f"><label>Base branch</label><select><option>develop</option></select></div>
+    <div class="f err"><label>Version</label><input value="0.1.0-" /><span class="hint">pre-release tag must match [a-z0-9.]+</span></div>
+  </div>
+</div></body></html>
