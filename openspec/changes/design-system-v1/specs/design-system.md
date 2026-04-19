@@ -12,6 +12,7 @@ This spec covers:
 
 - **Tokens** — color, type, spacing, radius, shadow, motion
 - **Voice and lexicon** — casing, person, status vocabulary, error-message structure
+- **Logging and telemetry** — syslog RFC conformance, severity vocabulary, MSGID stability
 - **Iconography** — set, size, stroke, color rules
 - **Brand assets** — logo marks and their provisional status
 - **Skill integration** — Claude Code skill location and contents
@@ -91,7 +92,10 @@ Copy reads like instrumentation: factual, verb-first, present tense. The reader 
 
 ### Emoji and ornament
 
-**MUST NOT** appear anywhere: CLI output, web UI, docs, commit messages authored through this system, error text. Unicode box-drawing characters (`•`, `─`, `│`, `└─`, `├─`) are permitted in terminal output as structural, not decorative.
+**MUST NOT** appear anywhere: CLI output, web UI, docs, commit messages authored through this system, error text.
+
+- **Permitted:** Unicode box-drawing characters (`•`, `─`, `│`, `└─`, `├─`) in terminal output, as structural rather than decorative.
+- **Forbidden:** all other Unicode pictographs, including the Dingbats block — `✓` (U+2713), `✗` (U+2717), `★`, `►`, `✦`, `✧`, arrow pictographs outside ASCII. Status MUST be communicated with the canonical word vocabulary (`passed`, `failed`, `present`, `absent`, etc.). If a visual marker is structurally necessary — for example aligning a fixed-width column — use a bracketed ASCII indicator paired with the word form (e.g., `[x] passed` / `[ ] pending`). The word is load-bearing; the bracket is scaffold.
 
 ### Numbers and units
 
@@ -134,6 +138,55 @@ Canonical form:
 - Confirmation: `"This will merge feature/gpu-accel into develop in 2 repos. Continue? [y/N]"`
 - Success line: `"Archived 2026-04-17-gpu-accel-v1. 4 commits merged to develop."`
 - Destructive: `"Force-remove worktree gpu-accel? Uncommitted changes in 1 repo will be lost. [y/N]"`
+
+## Logging and Telemetry
+
+All log output across SmallAIOS, ModelGate, and `smctl` conforms to syslog RFCs. The default target is **RFC 5424** (The Syslog Protocol). RFC 3164 (BSD syslog) is legacy and **MUST NOT** be adopted for new surfaces.
+
+This section governs structured log output (the `tracing` / `log` streams, any output written to a log file or forwarded to an aggregator). It does **not** govern the CLI's normal UX output — status lines, tables, confirmations, and error messages rendered to stdout / stderr during interactive use are covered by Voice and Lexicon above.
+
+### Severity vocabulary
+
+Use the RFC 5424 names exactly in user-visible log output and docs:
+
+| Numeric | RFC 5424 name | Typical meaning |
+|---|---|---|
+| 0 | `Emergency` | System is unusable |
+| 1 | `Alert` | Immediate action required |
+| 2 | `Critical` | Critical condition |
+| 3 | `Error` | Error condition |
+| 4 | `Warning` | Warning condition |
+| 5 | `Notice` | Normal but significant |
+| 6 | `Informational` | Informational |
+| 7 | `Debug` | Debug-level |
+
+Internal Rust APIs **MAY** use the short `tracing` / `log` aliases (`error`, `warn`, `info`, `debug`, `trace`). User-visible strings, documented severity labels, and any external configuration keys **MUST** use the RFC 5424 names.
+
+### Format
+
+- Output format **MUST** be RFC 5424 compatible when emitted to a syslog destination. A non-syslog pretty-printer for local `tracing` output is permitted for interactive `-v` / `-vv` modes.
+- **MSGID** values **MUST** be stable, short, and ASCII — they act as machine-readable event identifiers. Changing an MSGID is a breaking change for any consumer.
+- **STRUCTURED-DATA** is preferred over ad-hoc `format!` interpolation for contextual fields (repo name, branch, spec name, duration). Unstructured string concatenation into the log message is a violation when a structured field would do.
+- **APP-NAME** is the binary name (`smctl`). **PROCID** is the OS pid. **HOSTNAME** follows RFC 5424 resolution rules.
+- **Facility** for smctl and related CLIs is `local0` by default, overridable via configuration. `daemon` is reserved for `smctl serve --mcp` when it runs as a long-lived process.
+
+### Transport
+
+When logs leave the process:
+
+- **TLS:** RFC 5425 (Syslog over TLS). Default for remote destinations.
+- **UDP:** RFC 5426. Permitted only for local / low-criticality telemetry.
+- **TCP framing:** RFC 6587. Permitted where TLS is terminated upstream.
+
+### Implementation guidance
+
+- Prefer the Rust `tracing` crate with `tracing-subscriber`. Adopt a formatter that can emit RFC 5424 (candidates: `tracing-syslog`, the `syslog` crate, or a custom layer). Do not invent a log wire format.
+- Spans and events **SHOULD** attach the canonical status vocabulary from Voice and Lexicon when reporting operation outcomes.
+- Log-writing code **MUST NOT** embed emoji, color escapes, or the forbidden Unicode pictographs listed under Emoji and ornament. Color belongs to the interactive UX layer, not the structured log stream.
+
+### Auditability
+
+Safety-critical deployments (aerospace DO-178C, automotive ISO 26262) expect standards-conformant log output for SIEM ingestion and certification audit. This section makes that expectation first-class. Any future change that downgrades conformance (e.g., switching to a proprietary log format) supersedes this section explicitly.
 
 ## Iconography
 
@@ -227,3 +280,9 @@ The following pieces are adopted as placeholders and will be superseded:
 - [Lucide icons](https://lucide.dev) — ISC license
 - [IBM Plex Sans](https://github.com/IBM/plex) — SIL OFL 1.1
 - [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) — SIL OFL 1.1
+- [RFC 5424 — The Syslog Protocol](https://datatracker.ietf.org/doc/html/rfc5424)
+- [RFC 5425 — TLS Transport for Syslog](https://datatracker.ietf.org/doc/html/rfc5425)
+- [RFC 5426 — Syslog over UDP](https://datatracker.ietf.org/doc/html/rfc5426)
+- [RFC 6587 — Syslog over TCP](https://datatracker.ietf.org/doc/html/rfc6587)
+- [`tracing` crate](https://docs.rs/tracing) — preferred Rust logging facade
+- [`tracing-syslog`](https://docs.rs/tracing-syslog) — candidate RFC 5424 emitter

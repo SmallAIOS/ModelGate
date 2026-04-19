@@ -18,8 +18,9 @@ Driving concerns:
 1. **Adopt `ui/` as the design source of truth** — `colors_and_type.css`, `README.md`, `assets/`, `preview/`, `ui_kits/` become the canonical reference. No code move.
 2. **Install the `smallaios-design` skill** at `.claude/skills/smallaios-design/` so Claude Code loads the rules automatically. The skill references `ui/` for assets rather than duplicating them.
 3. **Declare the voice / lexicon contract** — lift the status vocabulary, casing rules, and error-message structure from `ui/README.md` into the spec so future CLI copy changes can cite it.
-4. **Record substitution flags** — fonts and logo mark are provisional. Future changes (`design-system-v2`, `brand-v1`) supersede.
-5. **Defer web dashboard** — explicitly out of scope. A later `modelgate-web-v1` change decides backend, framework, and shipping commitment.
+4. **Declare the logging contract** — all log output conforms to RFC 5424 (syslog). Severity names, MSGID stability, STRUCTURED-DATA usage, and transport RFCs (5425 / 5426 / 6587) are first-class spec content. Aerospace and automotive deployments expect standards-conformant logs for SIEM ingestion and certification audit.
+5. **Record substitution flags** — fonts and logo mark are provisional. Future changes (`design-system-v2`, `brand-v1`) supersede.
+6. **Defer web dashboard** — explicitly out of scope. A later `modelgate-web-v1` change decides backend, framework, and shipping commitment.
 
 ## Capabilities
 
