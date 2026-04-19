@@ -53,3 +53,16 @@ Specs live in `openspec/changes/<name>/` with: `.openspec.yaml`, `proposal.md`, 
 - `.local/` — AI-generated scratch, temp files, things not for git. Listed in .gitignore.
 - All Rust code follows `cargo fmt` and `cargo clippy -D warnings`.
 - Feature branches map 1:1 with OpenSpec changes.
+
+## Design system
+
+User-facing copy (CLI output, error messages, docs, any future web UI) follows the SmallAIOS design system declared in `openspec/changes/design-system-v1/specs/design-system.md`. The reference artifacts (tokens, voice rules, iconography, logo proposals) live in `ui/`.
+
+Key rules, applied reflexively:
+
+- **Voice:** address the operator as `you`, never `we`. Sentence case for labels. Imperative verbs on buttons (`Start build`, not `Building…`). No emoji. No exclamation points.
+- **Status vocabulary:** reuse canonical terms — `clean`/`dirty`, `ahead N`/`behind N`, `pending`/`running`/`passed`/`failed`, `active`/`archived`, `verified`/`unverified`, `present`/`absent`. New terms require updating the spec first.
+- **Error messages:** three parts — what happened, what it means, what to do next (an executable command).
+- **Product names:** `SmallAIOS`, `ModelGate`, `smctl` cased exactly. `smctl` stays lowercase; reword rather than capitalize at sentence start.
+
+Claude Code users: the `smallaios-design` skill at `.claude/skills/smallaios-design/` loads these rules automatically. Invoke it when designing or styling any surface.

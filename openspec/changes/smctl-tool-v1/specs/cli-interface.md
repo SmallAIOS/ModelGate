@@ -4,6 +4,8 @@
 
 `smctl` is a single binary with hierarchical subcommands. Every subcommand follows a consistent pattern: `smctl <domain> <action> [args] [flags]`.
 
+All user-facing copy in this surface — help text, prompts, confirmations, error messages, empty states, success lines — conforms to the voice, casing, status-vocabulary, and error-message rules declared in `openspec/changes/design-system-v1/specs/design-system.md`. New status terms or button labels require updating that spec first.
+
 ## Global Flags
 
 | Flag | Short | Description |
