@@ -71,3 +71,8 @@ These findings should be addressed under a successor change, not this one. Sugge
 3. **Spec amendment** — decide `✓` / `✗` policy in `specs/design-system.md` before the errors work lands.
 
 None of the above are blocking for `design-system-v1` adoption.
+
+## Resolutions landed on this branch
+
+- **`✓` / `✗` policy:** forbidden. Spec amended (see Emoji and ornament). When a visual marker is structurally necessary, use a bracketed ASCII indicator paired with the word form (`[x] passed` / `[ ] pending`). The three sites above (`smctl/src/main.rs:489, 638, 1095`) are now explicit violations and are in scope for `smctl-copy-v1`.
+- **Logging scope:** spec amended with an RFC 5424 contract (see Logging and Telemetry). None of the audit findings above are log-emitting sites, so the logging rule does not change this audit's counts.

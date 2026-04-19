@@ -32,6 +32,13 @@
 - [x] Record that `assets/logo-*.svg` are placeholders superseded by `brand-v1`
 - [x] Record that Lucide is a substitute for a future bespoke icon set (to include per-bus-protocol glyphs: CAN, ARINC 429, MIL-STD-1553, SpaceWire, DDS)
 
+## Amendments on this branch
+
+- [x] Resolve the `✓` / `✗` glyph question raised by `voice-audit.md` — forbidden; use bracketed ASCII + word form
+- [x] Add a Logging and Telemetry section declaring RFC 5424 conformance across the ecosystem (severity vocabulary, MSGID stability, STRUCTURED-DATA, transport RFCs)
+- [x] Update `design.md` with Decision 6 (logging RFC) and a forward-looking risk note
+- [x] Update the Claude Code skill with the new logging rule
+
 ## Validator Note
 
 `smctl spec validate` cannot run here without `smctl workspace init` first, which would create `.smctl/` state outside this change's scope. Validated instead by reading `smctl-spec/src/lib.rs:186-233` and confirming all four required gates are satisfied: `## Why`, `## What Changes`, `## Decisions`, and at least one `- [` task checkbox.

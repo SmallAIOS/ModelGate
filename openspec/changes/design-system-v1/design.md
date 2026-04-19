@@ -83,6 +83,22 @@ This change ratifies the draft as the canonical design source without committing
 - *Tabler / Phosphor* — heavier, more stylized, less engineering-tool feel.
 - *Vendor custom-only set now* — premature; no icon inventory pressure yet.
 
+### Decision 6: Logging conforms to RFC 5424
+
+**Choice:** All log output across SmallAIOS, ModelGate, and `smctl` conforms to **RFC 5424** (The Syslog Protocol). RFC 3164 is legacy and is not adopted. Severity names use the RFC 5424 vocabulary exactly; MSGID values are stable identifiers; STRUCTURED-DATA is preferred over ad-hoc string interpolation. Transport RFCs 5425 (TLS), 5426 (UDP), and 6587 (TCP framing) apply when logs leave the process.
+
+**Rationale:** SmallAIOS targets aerospace (DO-178C DAL A) and automotive (ISO 26262) workloads. Safety-critical deployments expect standards-conformant log output for SIEM ingestion and certification audit. Inventing a format, using RFC 3164, or relying on the `tracing` crate's default pretty-printer for production log streams would fail that expectation. Declaring RFC 5424 up front prevents per-crate improvisation and ensures MSGID consumers (monitoring pipelines, incident systems) have a stable contract.
+
+This decision does not govern interactive CLI output (status lines, tables, confirmations). Those are UX and follow the Voice and Lexicon rules. Logging and UX are different surfaces with different contracts.
+
+**Alternatives considered:**
+
+- *Adopt RFC 3164 for simplicity* — the older BSD format lacks STRUCTURED-DATA, has ambiguous timestamps, and is explicitly deprecated by 5424. Rejected.
+- *Defer the logging decision to each crate* — invites drift and forces a later migration once the first safety-critical consumer arrives. Rejected — decide once, declare clearly.
+- *Adopt OpenTelemetry Logs Data Model directly* — OTel is a richer model and worth considering, but its log spec is younger, the Rust tooling (`opentelemetry-appender-tracing`) is less mature, and SIEM / audit consumers in the target industries are syslog-shaped. Revisit in a successor change if OTel becomes the ecosystem default.
+
+**Rust implementation guidance:** Prefer `tracing` + `tracing-subscriber` with an RFC 5424 formatter (`tracing-syslog`, the `syslog` crate, or a custom layer). Crates **MUST NOT** invent a log wire format. Log code **MUST NOT** embed emoji, color escapes, or forbidden Unicode pictographs; color is for the interactive UX layer, not structured logs.
+
 ## Risks / Trade-offs
 
 - **Skill discoverability.** Contributors not using Claude Code won't see the skill prompt. Mitigation: `ui/README.md` carries the same rules verbatim.
@@ -90,6 +106,7 @@ This change ratifies the draft as the canonical design source without committing
 - **Logo ambiguity.** Using a placeholder logo in docs and slides may read as "official" externally. Mitigation: add a caveat line in any external doc that embeds the mark, citing this change.
 - **Voice enforcement drift.** Without lint, CLI copy can drift. Accepted risk — surface area is small; revisit if incident rate warrants.
 - **`ui_kits/` rot.** JSX fixtures may drift from the CLI spec as `smctl` evolves. Accepted — they are reference, not contract. If they become misleading, update or delete in a follow-up.
+- **Log format is not yet wired.** No crate currently emits RFC 5424. This is a forward-looking contract; the first log-emitting surface will have to pick a formatter and prove it. Mitigation: treat the first such implementation as the reference, and codify its choices in a successor change (`smctl-logging-v1` or similar).
 
 ## Migration Plan
 
