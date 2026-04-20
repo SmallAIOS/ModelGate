@@ -66,3 +66,7 @@ Key rules, applied reflexively:
 - **Product names:** `SmallAIOS`, `ModelGate`, `smctl` cased exactly. `smctl` stays lowercase; reword rather than capitalize at sentence start.
 
 Claude Code users: the `smallaios-design` skill at `.claude/skills/smallaios-design/` loads these rules automatically. Invoke it when designing or styling any surface.
+
+## Logging
+
+All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The canonical MSGID catalog and severity-mapping table live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that document is authoritative for any new MSGID allocation, facility choice, or transport change.
