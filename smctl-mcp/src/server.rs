@@ -83,6 +83,32 @@ pub struct WorkspaceRemoveParams {
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSyncParams {}
 
+/// Input schema for the `smctl_worktree_add` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeAddParams {
+    /// Name of the worktree set; becomes the directory under the
+    /// workspace's worktree base and the feature-branch suffix.
+    pub name: String,
+    /// Optional subset of repo names to include. Omit to include every
+    /// repo in the manifest.
+    #[serde(default)]
+    pub repos: Option<Vec<String>>,
+}
+
+/// Input schema for the `smctl_worktree_list` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeListParams {}
+
+/// Input schema for the `smctl_worktree_remove` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeRemoveParams {
+    /// Name of the worktree set to remove.
+    pub name: String,
+    /// Force removal even when a worktree has uncommitted changes.
+    #[serde(default)]
+    pub force: Option<bool>,
+}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -401,6 +427,142 @@ impl SmctlServer {
         })?;
 
         let payload = serde_json::json!({ "repos": results });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Create a linked worktree set across workspace repos.
+    #[tool(
+        name = "smctl_worktree_add",
+        description = "Create a linked worktree set under the workspace's worktree base. Uses the configured feature prefix to name the branch."
+    )]
+    async fn worktree_add(
+        &self,
+        Parameters(params): Parameters<WorktreeAddParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let branch = format!("{}{}", manifest.flow.feature_prefix, params.name);
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+        let repos = params.repos.clone();
+
+        let infos = tokio::task::spawn_blocking(move || {
+            smctl_workspace::worktree::add_worktree(
+                &root,
+                &manifest,
+                &name,
+                repos.as_deref(),
+                &branch,
+            )
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree add task failed to join. {e}. \
+                     Retry the tool call, or run `smctl worktree add {}` to reproduce.",
+                    params.name
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree add failed. {e}. \
+                     Run `smctl worktree list` to inspect current worktrees, resolve the conflict, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({ "name": params.name, "worktrees": infos });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// List every worktree set under the workspace's worktree base.
+    #[tool(
+        name = "smctl_worktree_list",
+        description = "List worktree sets under the workspace's worktree base. Returns each set's repos with their checked-out branches."
+    )]
+    async fn worktree_list(
+        &self,
+        Parameters(_): Parameters<WorktreeListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+
+        let sets = tokio::task::spawn_blocking(move || {
+            smctl_workspace::worktree::list_worktrees(&root, &manifest)
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree list task failed to join. {e}. \
+                     Retry the tool call, or run `smctl worktree list` to reproduce."
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree list failed. {e}. \
+                     Check the workspace's worktree base exists and is readable, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({ "sets": sets });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Remove a worktree set across every repo in the workspace.
+    #[tool(
+        name = "smctl_worktree_remove",
+        description = "Remove a worktree set from every repo in the workspace. Pass force=true to drop worktrees that have uncommitted changes."
+    )]
+    async fn worktree_remove(
+        &self,
+        Parameters(params): Parameters<WorktreeRemoveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+        let force = params.force.unwrap_or(false);
+
+        tokio::task::spawn_blocking(move || {
+            smctl_workspace::worktree::remove_worktree(&root, &manifest, &name, force)
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree remove task failed to join. {e}. \
+                     Retry the tool call, or run `smctl worktree remove {}` to reproduce.",
+                    params.name
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Worktree remove failed. {e}. \
+                     Run `smctl worktree list` to confirm the set name, or pass force=true to drop dirty worktrees."
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({ "removed": params.name, "force": force });
         Ok(CallToolResult::success(vec![Content::text(
             Self::to_json_text(&payload)?,
         )]))
