@@ -45,14 +45,19 @@ Grouped by crate. Sites are drawn from `openspec/changes/design-system-v1/voice-
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` clean
 - [x] `cargo fmt --check` clean
 
+## Scope expansion — sites found during implementation
+
+After the initial audit-scoped pass landed, three adjacent thin or malformed errors surfaced during review. Decision 5 in `design.md` has been amended to allow in-scope uptake when the site is a direct peer of audited sites and the remediation shape is already covered by the catalog. The three sites below are now in scope.
+
+- [x] `smctl-build/src/lib.rs` — `find_repo` lookup in build planning: add remediation pointing at `smctl workspace status` / `smctl workspace add`
+- [x] `smctl-flow/src/lib.rs` — `find_branch` check in feature-start base validation: add remediation pointing at `smctl flow init` and `git branch -a`
+- [x] `smctl-build/src/lib.rs` — `run_cmd` command-failed: collapse the multi-line `anyhow::bail!` to single-line period-separated form per Decision 3; extract first stderr line as a hint while pointing the operator to the direct command for full output
+
 ## Out-of-scope follow-ups (file as separate issues, do NOT expand scope here)
 
 - [ ] Error-type refactor (`thiserror` + structured `SmctlError`) — own change
 - [ ] Lint / CI check for three-part rubric on new error sites — revisit if drift
 - [ ] Localization scaffolding — revisit only if a non-English consumer appears
-- [ ] `smctl-build/src/lib.rs:143` — `.with_context(|| format!("repo '{name}' not found"))` on build-plan lookup. Thin error, not in the original audit. Belongs to a `smctl-errors-v2` follow-up pass.
-- [ ] `smctl-flow/src/lib.rs:324` — `"base branch '{base}' not found in {}"` context on `find_branch`. Thin error, not in the original audit. Belongs to a `smctl-errors-v2` follow-up pass.
-- [ ] `smctl-build/src/lib.rs:327` — `"{}: command '{}' failed:\n{}"` multi-line with embedded stderr. Preserves git-style output but drifts from the single-line period-separated convention (Decision 3). Could be reformatted in a follow-up.
 
 ## Archive
 

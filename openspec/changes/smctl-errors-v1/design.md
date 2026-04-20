@@ -54,11 +54,17 @@ Example — spec not found:
 
 **Rationale:** Full-string matching is brittle; stable-substring matching lets copy polish happen without test churn. Document the chosen substring in a one-line test comment so the intent is explicit.
 
-### Decision 5: Scope boundary — file-level, not crate-level
+### Decision 5: Scope boundary — audit-driven, with a narrow expansion allowance
 
-**Choice:** Process each file in the audit list; stop at the audit list. Do not expand scope to "every error message in the codebase" even if non-flagged errors look thin while the file is open.
+**Choice (v1.0 — initial):** Process each file in the audit list; stop at the audit list. Do not expand scope to "every error message in the codebase" even if non-flagged errors look thin while the file is open.
 
-**Rationale:** Scope creep on mass-rewording changes explodes review burden. If an out-of-scope error message needs attention, file it as a follow-up. The audit is the contract.
+**Rationale:** Scope creep on mass-rewording changes explodes review burden. The audit is the contract.
+
+**Amendment (v1.1 — after the first implementation pass):** When a peer of an audited site surfaces during the review pass AND its remediation shape is already covered by the catalog in this document, it is in scope. This is deliberately narrow: the surfaced site must be in a file already touched by the change, must be a thin or malformed error by the rubric, and must not require a new remediation category. Anything outside that envelope remains out of scope and gets filed as a follow-up issue.
+
+**Why amend rather than spin a separate change:** A `smctl-errors-v2` for three sites would be more ceremony than signal. The amendment keeps the spec tree honest about what actually landed, and the implementation commit is clearly bounded.
+
+**What the amendment does NOT permit:** Rewriting error types, introducing helpers, touching files not already audited, inventing new remediation shapes, or "while we're here" polishing of non-error strings.
 
 ## Remediation Catalog (preliminary)
 
