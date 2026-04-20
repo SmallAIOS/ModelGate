@@ -150,6 +150,18 @@ pub struct FlowReleaseFinishParams {
     pub version: String,
 }
 
+/// Input schema for spec-by-name tools.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpecByNameParams {
+    /// Spec identifier, matching the directory under
+    /// `openspec/changes/`.
+    pub name: String,
+}
+
+/// Input schema for the `smctl_spec_list` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpecListParams {}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -897,6 +909,174 @@ impl SmctlServer {
 
         Ok(CallToolResult::success(vec![Content::text(
             Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Scaffold a new OpenSpec change folder.
+    #[tool(
+        name = "smctl_spec_new",
+        description = "Scaffold a new OpenSpec change under openspec/changes/<name>. Writes proposal.md, design.md, and tasks.md stubs."
+    )]
+    async fn spec_new(
+        &self,
+        Parameters(params): Parameters<SpecByNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+        let name = params.name.clone();
+
+        let info = tokio::task::spawn_blocking(move || smctl_spec::new_spec(&openspec_dir, &name))
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec new task failed to join. {e}. \
+                         Retry the tool call, or run `smctl spec new {}` to reproduce.",
+                        params.name
+                    ),
+                    None,
+                )
+            })?
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec new failed. {e}. \
+                         Run `smctl spec list` to see existing specs, then retry with a unique name."
+                    ),
+                    None,
+                )
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&info).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Validate an OpenSpec change for completeness.
+    #[tool(
+        name = "smctl_spec_validate",
+        description = "Validate an OpenSpec change. Reports missing documents and required sections; returns valid=true when every check passes."
+    )]
+    async fn spec_validate(
+        &self,
+        Parameters(params): Parameters<SpecByNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+        let name = params.name.clone();
+
+        let result =
+            tokio::task::spawn_blocking(move || smctl_spec::validate(&openspec_dir, &name))
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Spec validate task failed to join. {e}. \
+                         Retry the tool call, or run `smctl spec validate {}` to reproduce.",
+                            params.name
+                        ),
+                        None,
+                    )
+                })?
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Spec validate failed. {e}. \
+                         Run `smctl spec list` to confirm the spec name, then retry."
+                        ),
+                        None,
+                    )
+                })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Archive a completed OpenSpec change.
+    #[tool(
+        name = "smctl_spec_archive",
+        description = "Archive a completed OpenSpec change. Moves it into openspec/changes/archive/<date>-<name>."
+    )]
+    async fn spec_archive(
+        &self,
+        Parameters(params): Parameters<SpecByNameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+        let name = params.name.clone();
+
+        let dest = tokio::task::spawn_blocking(move || smctl_spec::archive(&openspec_dir, &name))
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec archive task failed to join. {e}. \
+                         Retry the tool call, or run `smctl spec archive {}` to reproduce.",
+                        params.name
+                    ),
+                    None,
+                )
+            })?
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec archive failed. {e}. \
+                         Run `smctl spec validate {}` to confirm the spec exists and is complete, then retry.",
+                        params.name
+                    ),
+                    None,
+                )
+            })?;
+
+        let payload = serde_json::json!({
+            "name": params.name,
+            "archive_path": dest.display().to_string(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// List every OpenSpec change in the workspace.
+    #[tool(
+        name = "smctl_spec_list",
+        description = "List every OpenSpec change in the workspace, including archived ones. Returns each spec's phase and task-completion counts."
+    )]
+    async fn spec_list(
+        &self,
+        Parameters(_): Parameters<SpecListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+
+        let specs = tokio::task::spawn_blocking(move || smctl_spec::list_specs(&openspec_dir))
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec list task failed to join. {e}. \
+                         Retry the tool call, or run `smctl spec list` to reproduce."
+                    ),
+                    None,
+                )
+            })?
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Spec list failed. {e}. \
+                         Check that {} exists and is readable, then retry.",
+                        self.workspace_root
+                            .join(&manifest.spec.openspec_dir)
+                            .display()
+                    ),
+                    None,
+                )
+            })?;
+
+        let payload = serde_json::json!({ "specs": specs });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
         )]))
     }
 }

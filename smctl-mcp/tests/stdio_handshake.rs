@@ -26,6 +26,10 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_flow_release_finish",
     "smctl_flow_hotfix_start",
     "smctl_flow_hotfix_finish",
+    "smctl_spec_new",
+    "smctl_spec_validate",
+    "smctl_spec_archive",
+    "smctl_spec_list",
 ];
 
 #[tokio::test]
@@ -114,6 +118,28 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     assert!(
         wt_json.get("sets").is_some(),
         "expected sets field in {wt_text}"
+    );
+
+    // Spec family: list on a manifest with no openspec dir returns an
+    // empty specs array (the library returns Ok(vec![]) when the
+    // directory is absent).
+    let specs = client
+        .call_tool(CallToolRequestParams::new("smctl_spec_list"))
+        .await?;
+    assert!(
+        !specs.is_error.unwrap_or(false),
+        "smctl_spec_list reported an error payload: {specs:?}"
+    );
+    let specs_text = specs
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_spec_list should carry text content");
+    let specs_json: serde_json::Value = serde_json::from_str(specs_text)?;
+    assert!(
+        specs_json.get("specs").is_some(),
+        "expected specs field in {specs_text}"
     );
 
     // Flow family: init with no repos completes and returns a
