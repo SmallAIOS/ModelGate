@@ -66,7 +66,7 @@
 
 ## MCP Tools — Build
 
-- [ ] `smctl_build` — Build repos in dependency order
+- [x] `smctl_build` — Build repos in dependency order
 
 ## MCP Resources
 
