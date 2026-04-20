@@ -462,9 +462,7 @@ async fn main() {
     // stderr via `smctl_log::init(..., stderr: true, file: None)`.
     // Every other command uses the normal init_tracing path.
     let defer_tracing = matches!(cli.command, Commands::Serve { mcp: true, .. });
-    if !defer_tracing
-        && let Err(e) = init_tracing(&cli)
-    {
+    if !defer_tracing && let Err(e) = init_tracing(&cli) {
         eprintln!("error: failed to initialize logging: {e:#}");
         process::exit(exit_code::GENERAL_ERROR);
     }
