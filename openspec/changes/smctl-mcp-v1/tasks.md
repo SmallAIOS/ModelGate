@@ -42,9 +42,9 @@
 
 ## MCP Tools — Worktree
 
-- [ ] `smctl_worktree_add` — Create linked worktrees
-- [ ] `smctl_worktree_list` — List active worktrees
-- [ ] `smctl_worktree_remove` — Remove worktree set
+- [x] `smctl_worktree_add` — Create linked worktrees
+- [x] `smctl_worktree_list` — List active worktrees
+- [x] `smctl_worktree_remove` — Remove worktree set
 
 ## MCP Tools — Git Flow
 

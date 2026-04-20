@@ -16,6 +16,9 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_workspace_add",
     "smctl_workspace_remove",
     "smctl_workspace_sync",
+    "smctl_worktree_add",
+    "smctl_worktree_list",
+    "smctl_worktree_remove",
 ];
 
 #[tokio::test]
@@ -84,6 +87,26 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     assert!(
         json.get("repos").is_some(),
         "expected repos field in {text}"
+    );
+
+    // Worktree family: list with no worktrees returns an empty set.
+    let wt = client
+        .call_tool(CallToolRequestParams::new("smctl_worktree_list"))
+        .await?;
+    assert!(
+        !wt.is_error.unwrap_or(false),
+        "smctl_worktree_list reported an error payload: {wt:?}"
+    );
+    let wt_text = wt
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_worktree_list should carry text content");
+    let wt_json: serde_json::Value = serde_json::from_str(wt_text)?;
+    assert!(
+        wt_json.get("sets").is_some(),
+        "expected sets field in {wt_text}"
     );
 
     // Tear down cleanly.
