@@ -34,11 +34,11 @@
 
 ## MCP Tools — Workspace
 
-- [ ] `smctl_workspace_init` — Initialize workspace
+- [x] `smctl_workspace_init` — Initialize workspace
 - [x] `smctl_workspace_status` — Show repo statuses (vertical slice — landed)
-- [ ] `smctl_workspace_add` — Add repo to workspace
-- [ ] `smctl_workspace_remove` — Remove repo from workspace
-- [ ] `smctl_workspace_sync` — Fetch/pull all repos
+- [x] `smctl_workspace_add` — Add repo to workspace
+- [x] `smctl_workspace_remove` — Remove repo from workspace
+- [x] `smctl_workspace_sync` — Fetch/pull all repos
 
 ## MCP Tools — Worktree
 

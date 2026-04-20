@@ -45,6 +45,44 @@ pub struct WorkspaceStatusParams {
     pub workspace: Option<String>,
 }
 
+/// Input schema for the `smctl_workspace_init` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceInitParams {
+    /// Workspace name recorded in the manifest. Defaults to the last
+    /// path segment of `path`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Absolute path where the workspace manifest is written. Defaults
+    /// to the root the server was started with.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Input schema for the `smctl_workspace_add` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceAddParams {
+    /// Git URL of the repo to register.
+    pub url: String,
+    /// Repo name in the manifest. Defaults to the last path segment of
+    /// `url` with any `.git` suffix stripped.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Local path relative to the workspace root. Defaults to `name`.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Input schema for the `smctl_workspace_remove` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceRemoveParams {
+    /// Name of the repo to remove from the manifest.
+    pub repo: String,
+}
+
+/// Input schema for the `smctl_workspace_sync` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceSyncParams {}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -60,6 +98,35 @@ impl SmctlServer {
             workspace_root: Arc::new(workspace_root),
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Load the workspace manifest from the server's root, returning a
+    /// voice-conformant three-part error if the manifest is missing.
+    fn load_manifest(&self) -> Result<smctl_workspace::WorkspaceManifest, ErrorData> {
+        smctl_workspace::WorkspaceManifest::load_from_root(&self.workspace_root).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Workspace manifest load failed. {e}. \
+                     Run `smctl workspace init` in {} or start the server from a workspace root.",
+                    self.workspace_root.display()
+                ),
+                None,
+            )
+        })
+    }
+
+    /// Serialize a value to pretty JSON, wrapping failures in a
+    /// voice-conformant error.
+    fn to_json_text(value: &serde_json::Value) -> Result<String, ErrorData> {
+        serde_json::to_string_pretty(value).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Response serialization failed. {e}. \
+                     Retry the tool call or run the equivalent `smctl` subcommand to reproduce."
+                ),
+                None,
+            )
+        })
     }
 }
 
@@ -133,6 +200,210 @@ impl SmctlServer {
         })?;
 
         Ok(CallToolResult::success(vec![Content::text(text)]))
+    }
+
+    /// Initialize a workspace manifest at the server's root (or a
+    /// caller-provided path).
+    #[tool(
+        name = "smctl_workspace_init",
+        description = "Initialize a workspace manifest. Writes .smctl/workspace.toml under the given path, or under the root the server was started with."
+    )]
+    async fn workspace_init(
+        &self,
+        Parameters(params): Parameters<WorkspaceInitParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let root = params
+            .path
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| (*self.workspace_root).clone());
+        let name = params.name.unwrap_or_else(|| {
+            root.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "workspace".to_string())
+        });
+
+        let manifest = smctl_workspace::init_workspace(&root, &name).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Workspace init failed. {e}. \
+                     Check write permissions on {} or pick a different path.",
+                    root.display()
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({
+            "name": manifest.workspace.name,
+            "root": root.display().to_string(),
+            "manifest_path": root.join(".smctl").join("workspace.toml").display().to_string(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Add a repo entry to the workspace manifest.
+    #[tool(
+        name = "smctl_workspace_add",
+        description = "Add a repo to the workspace manifest. Pass the git URL; optionally override the repo name and local path."
+    )]
+    async fn workspace_add(
+        &self,
+        Parameters(params): Parameters<WorkspaceAddParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut manifest = self.load_manifest()?;
+        let inferred_name = params.name.clone().unwrap_or_else(|| {
+            params
+                .url
+                .rsplit('/')
+                .next()
+                .unwrap_or(&params.url)
+                .trim_end_matches(".git")
+                .to_string()
+        });
+
+        smctl_workspace::add_repo(
+            &mut manifest,
+            &inferred_name,
+            &params.url,
+            params.path.as_deref(),
+        )
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Repo add failed. {e}. \
+                     Run `smctl workspace status` to see the current repo list, then retry with a unique name."
+                ),
+                None,
+            )
+        })?;
+
+        manifest.save_to_root(&self.workspace_root).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Manifest save failed. {e}. \
+                     Check write permissions on {} and retry.",
+                    self.workspace_root.join(".smctl").display()
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({
+            "name": inferred_name,
+            "url": params.url,
+            "path": params.path,
+            "repos": manifest.repo_names(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Remove a repo entry from the workspace manifest.
+    #[tool(
+        name = "smctl_workspace_remove",
+        description = "Remove a repo from the workspace manifest. Pass the repo name exactly as it appears in workspace.toml."
+    )]
+    async fn workspace_remove(
+        &self,
+        Parameters(params): Parameters<WorkspaceRemoveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut manifest = self.load_manifest()?;
+        smctl_workspace::remove_repo(&mut manifest, &params.repo).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Repo remove failed. {e}. \
+                     Run `smctl workspace status` to confirm the repo name, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        manifest.save_to_root(&self.workspace_root).map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Manifest save failed. {e}. \
+                     Check write permissions on {} and retry.",
+                    self.workspace_root.join(".smctl").display()
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({
+            "removed": params.repo,
+            "repos": manifest.repo_names(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Fetch and fast-forward every repo in the workspace.
+    #[tool(
+        name = "smctl_workspace_sync",
+        description = "Fast-forward pull every repo in the workspace. Skips repos that are not yet cloned; reports per-repo success or failure."
+    )]
+    async fn workspace_sync(
+        &self,
+        Parameters(_): Parameters<WorkspaceSyncParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+
+        let results = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::with_capacity(manifest.repos.len());
+            for repo in &manifest.repos {
+                let repo_path = root.join(repo.local_path());
+                if !repo_path.exists() {
+                    out.push(serde_json::json!({
+                        "repo": repo.name,
+                        "status": "absent",
+                        "message": "repo not cloned; skipped",
+                    }));
+                    continue;
+                }
+                let output = std::process::Command::new("git")
+                    .args(["pull", "--ff-only"])
+                    .current_dir(&repo_path)
+                    .output();
+                match output {
+                    Ok(o) if o.status.success() => out.push(serde_json::json!({
+                        "repo": repo.name,
+                        "status": "synced",
+                    })),
+                    Ok(o) => out.push(serde_json::json!({
+                        "repo": repo.name,
+                        "status": "failed",
+                        "message": String::from_utf8_lossy(&o.stderr).trim().to_string(),
+                    })),
+                    Err(e) => out.push(serde_json::json!({
+                        "repo": repo.name,
+                        "status": "failed",
+                        "message": format!("{e}"),
+                    })),
+                }
+            }
+            out
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Workspace sync task failed to join. {e}. \
+                     Retry the tool call, or run `smctl workspace sync` to reproduce."
+                ),
+                None,
+            )
+        })?;
+
+        let payload = serde_json::json!({ "repos": results });
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
     }
 }
 

@@ -1,16 +1,22 @@
 //! Integration test: drive `smctl-mcp` over stdio with a real rmcp client.
 //!
-//! Exercises the vertical slice from smctl-mcp-v1:
-//!
-//! 1. MCP `initialize` handshake returns capabilities with `tools` set.
-//! 2. `tools/list` includes `smctl_workspace_status`.
-//! 3. Calling `smctl_workspace_status` against a freshly-initialized
-//!    workspace succeeds and returns a `repos` array.
+//! Exercises the initialize handshake plus the tool-surface contract:
+//! every tool in `EXPECTED_TOOLS` must be listed, and representative
+//! tools from each family must respond to `tools/call`.
 
 use std::path::PathBuf;
 
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, ClientInfo};
+
+/// Every tool smctl-mcp advertises. Extend this list as new tools land.
+const EXPECTED_TOOLS: &[&str] = &[
+    "smctl_workspace_status",
+    "smctl_workspace_init",
+    "smctl_workspace_add",
+    "smctl_workspace_remove",
+    "smctl_workspace_sync",
+];
 
 #[tokio::test]
 async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
@@ -45,17 +51,19 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     );
     assert_eq!(peer_info.server_info.name, "smctl");
 
-    // List tools: expect exactly one, smctl_workspace_status.
+    // List tools: every tool in EXPECTED_TOOLS must be advertised.
     let tools = client.list_tools(Default::default()).await?;
     let names: Vec<String> = tools
         .tools
         .iter()
         .map(|t| t.name.clone().into_owned())
         .collect();
-    assert!(
-        names.iter().any(|n| n == "smctl_workspace_status"),
-        "tool list must include smctl_workspace_status, got {names:?}"
-    );
+    for expected in EXPECTED_TOOLS {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "tool list must include {expected}, got {names:?}"
+        );
+    }
 
     // Call the tool with no arguments — default workspace is the one
     // the server was started with.
