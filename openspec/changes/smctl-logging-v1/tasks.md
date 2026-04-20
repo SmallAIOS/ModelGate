@@ -76,7 +76,7 @@ Note: instrumentation lives at the CLI dispatch layer rather than inside each `s
 
 - [x] Update `README.md` with a short Logging section + global-flags table row + `[logging]` example in the workspace.toml reference
 - [x] Update `CLAUDE.md` with a Logging section pointing at the MSGID catalog
-- [ ] Update `.claude/skills/smallaios-design/SKILL.md` — **blocked**: harness denies writes under `.claude/skills/`. Follow-up: apply the one-line edit (add the MSGID-catalog path + severity-mapping reference to the existing Logging bullet under "Reflexive design principles") manually outside the agent sandbox.
+- [x] Update `.claude/skills/smallaios-design/SKILL.md` — extend the Logging bullet under "Reflexive design principles" with the MSGID catalog path and the severity-mapping table reference (applied outside the agent sandbox; subagent writes under `.claude/skills/` were denied by the harness)
 
 ## Archive
 
