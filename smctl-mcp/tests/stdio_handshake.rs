@@ -19,6 +19,13 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_worktree_add",
     "smctl_worktree_list",
     "smctl_worktree_remove",
+    "smctl_flow_init",
+    "smctl_flow_feature_start",
+    "smctl_flow_feature_finish",
+    "smctl_flow_release_start",
+    "smctl_flow_release_finish",
+    "smctl_flow_hotfix_start",
+    "smctl_flow_hotfix_finish",
 ];
 
 #[tokio::test]
@@ -107,6 +114,28 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     assert!(
         wt_json.get("sets").is_some(),
         "expected sets field in {wt_text}"
+    );
+
+    // Flow family: init with no repos completes and returns a
+    // FlowResult with an empty repos array.
+    let flow = client
+        .call_tool(CallToolRequestParams::new("smctl_flow_init"))
+        .await?;
+    assert!(
+        !flow.is_error.unwrap_or(false),
+        "smctl_flow_init reported an error payload: {flow:?}"
+    );
+    let flow_text = flow
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_flow_init should carry text content");
+    let flow_json: serde_json::Value = serde_json::from_str(flow_text)?;
+    assert_eq!(
+        flow_json.get("operation").and_then(|v| v.as_str()),
+        Some("flow init"),
+        "expected operation=flow init in {flow_text}"
     );
 
     // Tear down cleanly.
