@@ -15,6 +15,7 @@ smctl-workspace = { path = "../smctl-workspace" }
 smctl-flow = { path = "../smctl-flow" }
 smctl-spec = { path = "../smctl-spec" }
 smctl-build = { path = "../smctl-build" }
+smctl-log = { path = "../smctl-log" }
 
 clap.workspace = true
 clap_complete.workspace = true

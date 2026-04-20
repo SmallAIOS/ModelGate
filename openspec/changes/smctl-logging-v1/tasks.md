@@ -9,65 +9,68 @@
 
 ## Crate Bootstrap
 
-- [ ] Create `smctl-log/` directory with `Cargo.toml` and `src/`
-- [ ] Add `smctl-log` to the root `Cargo.toml` workspace members
-- [ ] Add `tracing`, `tracing-subscriber`, `syslog`, `chrono` (or `time`) dependencies
-- [ ] Add `smctl-log` as a dependency of `smctl` (the binary crate)
+- [x] Create `smctl-log/` directory with `Cargo.toml` and `src/`
+- [x] Add `smctl-log` to the root `Cargo.toml` workspace members
+- [x] Add `tracing`, `tracing-subscriber`, `time`, `gethostname`, `thiserror` dependencies (syslog crate deferred; see below)
+- [x] Add `smctl-log` as a dependency of `smctl` (the binary crate)
 
 ## Formatter
 
-- [ ] Implement `formatter::Rfc5424Layer` — a `tracing_subscriber::Layer` that serializes events to RFC 5424
-- [ ] Implement `severity::tracing_level_to_syslog(Level) -> u8`
-- [ ] Implement `msgid::MsgId` enum with `Display` producing the canonical `SMCTL-NNNN` string
-- [ ] Implement STRUCTURED-DATA serialization — escape `]` `"` `\` per RFC 5424 § 6.3.3
-- [ ] Implement RFC 3339 timestamp emission using `chrono` or `time`
+- [x] Implement `Rfc5424` — a `FormatEvent` impl for `tracing-subscriber::fmt::Layer` (chose the FormatEvent idiom over a free-standing Layer so it composes cleanly with MakeWriter)
+- [x] Implement `severity::from_tracing_level(Level) -> Severity`
+- [x] Implement `msgid::MsgId` enum with `Display` producing the canonical `SMCTL-NNNN` string
+- [x] Implement STRUCTURED-DATA serialization — escape `]` `"` `\` per RFC 5424 § 6.3.3
+- [x] Implement RFC 3339 timestamp emission using `time` crate
 
 ## Transports
 
-- [ ] `transport::Stderr` — writes one RFC 5424 line per event to stderr
-- [ ] `transport::File` — append-only file writer; creates parent dir if missing
-- [ ] `transport::Syslog` — Unix socket via `syslog` crate; fall back to stderr on open failure with a one-time WARN
+- [x] stderr — default active when no `--log-file`; otherwise gated on `--verbose`
+- [x] File (`--log-file <path>`) — append-only, creates parent dir if absent, `Mutex<File>` for thread safety
+- [ ] Syslog Unix socket (`--log-syslog`) — **deferred** within this change. Follow-up scope: add the `syslog` crate dep and a third transport layer. Not shipping in the first commit series; file as a follow-up task if a real target arrives before we finish.
 
 ## Subscriber Init
 
-- [ ] `smctl_log::init(config: &LoggingConfig)` — composes Layers per config
-- [ ] `LoggingConfig` struct — `transports: Vec<Transport>`, `level: Level`, `file: Option<PathBuf>`, `facility: SyslogFacility`
-- [ ] Config precedence resolver: CLI flags > env > workspace.toml > defaults
-- [ ] Ensure `init` is idempotent (calling twice is a no-op, not a panic)
+- [x] `smctl_log::init(config: &LoggingConfig)` — composes stderr + file layers per config
+- [x] `LoggingConfig` struct — `level`, `stderr`, `file`, `facility`, `app_name`
+- [x] `init` is idempotent via `OnceLock` — second call is a silent no-op
+- [ ] Config precedence resolver for `workspace.toml` `[logging]` — deferred along with the manifest schema (below)
 
 ## CLI Integration
 
-- [ ] Add `--log-syslog` / `--log-file` / `--log-level` global flags to `smctl/src/main.rs`
-- [ ] Wire `SMCTL_LOG_SYSLOG` / `SMCTL_LOG_FILE` / `SMCTL_LOG_LEVEL` env vars
-- [ ] Cross-wire existing `--verbose` / `--quiet` to `--log-level` (verbose bumps level, quiet suppresses)
-- [ ] Call `smctl_log::init` at the top of `main()`, after clap parsing
+- [x] Add `--log-file` / `--log-level` global flags to `smctl/src/main.rs`
+- [ ] `--log-syslog` flag — deferred with the syslog transport
+- [x] Wire `SMCTL_LOG_FILE` / `SMCTL_LOG_LEVEL` env vars
+- [x] Cross-wire existing `--verbose` / `--quiet` to `LogLevel`
+- [x] Call `smctl_log::init` at the top of `main()`, after clap parsing
 
 ## Workspace Manifest Schema
 
-- [ ] Add `[logging]` section to `smctl-workspace::WorkspaceManifest`
-- [ ] Parser accepts the section as optional; defaults applied when absent
-- [ ] Round-trip test: write → read preserves values
+- [ ] Add `[logging]` section to `smctl-workspace::WorkspaceManifest` — **deferred** within this change. First commit series exposes logging only via CLI flags and env vars. Follow-up adds the manifest schema + precedence resolver.
 
 ## Instrumentation (initial events)
 
-- [ ] `SMCTL-0001` — workspace initialized (in `smctl-workspace::init`)
-- [ ] `SMCTL-0002` — spec created (in `smctl-spec::new`)
-- [ ] `SMCTL-0003` — spec archived (in `smctl-spec::archive`)
-- [ ] `SMCTL-0004` — feature branch started (in `smctl-flow::feature::start`)
-- [ ] `SMCTL-0005` — feature branch finished (in `smctl-flow::feature::finish`)
-- [ ] `SMCTL-0006` — build started (in `smctl-build::build`)
-- [ ] `SMCTL-0007` — build completed (in `smctl-build::build`)
-- [ ] `SMCTL-0008` — build failed (in `smctl-build::build`)
-- [ ] `SMCTL-0099` — uncategorized error (fallback; emit from a top-level catch in `smctl/src/main.rs`)
+- [x] `SMCTL-0001` — workspace initialized (in the `WorkspaceCommands::Init` handler)
+- [x] `SMCTL-0002` — spec created (in the `SpecCommands::New` handler)
+- [x] `SMCTL-0003` — spec archived (in the `SpecCommands::Archive` handler)
+- [x] `SMCTL-0004` — feature branch started (in the `SpecCommands::New` auto-branch flow)
+- [x] `SMCTL-0005` — feature branch finished (in the `SpecCommands::Archive` auto-merge flow)
+- [x] `SMCTL-0006` — build started (in the `Commands::Build` handler)
+- [x] `SMCTL-0007` — build completed (in the `Commands::Build` handler, on success)
+- [x] `SMCTL-0008` — build failed (in the `Commands::Build` handler, on failure)
+- [x] `SMCTL-0099` — uncategorized error (fallback; emit from `main()` error branch)
+
+Note: instrumentation lives at the CLI dispatch layer rather than inside each `smctl-*` library crate. This keeps the core crates free of a `smctl-log` dependency in v1. A follow-up can push events down into the library crates if cross-surface callers (e.g., `smctl-mcp`) need the same events.
 
 ## Tests
 
-- [ ] Unit test: formatter emits RFC 5424-shaped line for a sample event
-- [ ] Unit test: STRUCTURED-DATA escaping for `]`, `"`, `\`
-- [ ] Unit test: severity mapping covers all five `tracing` levels
-- [ ] Unit test: MSGID `Display` produces canonical zero-padded form
-- [ ] Integration test: `smctl workspace init --log-file tmp.log` writes a line containing `SMCTL-0001`
-- [ ] Full workspace `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`
+- [x] Unit test: severity mapping covers all five `tracing` levels
+- [x] Unit test: MSGID `Display` produces canonical zero-padded form
+- [x] Unit test: STRUCTURED-DATA escaping for `]`, `"`, `\`
+- [x] Unit test: PRI calculation matches RFC for a sample facility/severity
+- [x] Integration test: real `tracing::info!` event produces a full RFC 5424 line (5 cases: Info, Error, missing-MSGID fallback, empty SD nilvalue, special-character escape)
+- [x] Integration test: `smctl workspace init --log-file tmp.log` writes `<134>1 … SMCTL-0001 …` to the file
+- [x] Integration test: `--log-level banana` fails with a clear error
+- [x] Full workspace `cargo test` (79 tests pass), `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo fmt --check` clean
 
 ## Docs
 
