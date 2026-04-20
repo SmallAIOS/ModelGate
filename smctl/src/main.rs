@@ -124,6 +124,17 @@ enum Commands {
         shell: Shell,
     },
 
+    /// Start a long-running service (MCP server, etc.)
+    Serve {
+        /// Run as an MCP server exposing smctl tools to AI coding assistants
+        #[arg(long)]
+        mcp: bool,
+
+        /// Use stdio transport (default, required when --mcp is set)
+        #[arg(long)]
+        stdio: bool,
+    },
+
     // --- Convenience aliases ---
     /// Start a feature branch + worktree (alias: flow feature start + worktree add)
     Feat {
@@ -446,7 +457,14 @@ fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSe
 async fn main() {
     let cli = Cli::parse();
 
-    if let Err(e) = init_tracing(&cli) {
+    // `serve --mcp` owns stdout for the MCP protocol and initializes
+    // tracing inside the subcommand handler so it can route logs to
+    // stderr via `smctl_log::init(..., stderr: true, file: None)`.
+    // Every other command uses the normal init_tracing path.
+    let defer_tracing = matches!(cli.command, Commands::Serve { mcp: true, .. });
+    if !defer_tracing
+        && let Err(e) = init_tracing(&cli)
+    {
         eprintln!("error: failed to initialize logging: {e:#}");
         process::exit(exit_code::GENERAL_ERROR);
     }
@@ -1331,6 +1349,46 @@ async fn run(cli: Cli) -> Result<i32> {
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "smctl", &mut std::io::stdout());
+            Ok(exit_code::SUCCESS)
+        }
+
+        Commands::Serve { mcp, stdio } => {
+            if !mcp {
+                anyhow::bail!(
+                    "Serve mode not specified. You must choose a server surface. \
+                     Run `smctl serve --mcp --stdio` to start the MCP server on stdio."
+                );
+            }
+
+            // stdio is the only transport wired in v1. The flag is
+            // accepted (and defaulted) so the CLI shape is stable when
+            // SSE / HTTP transports land. See
+            // openspec/changes/smctl-mcp-v1/tasks.md for follow-ups.
+            let _ = stdio;
+
+            // MCP owns stdout; route logs to stderr via the shared
+            // subscriber. `smctl_log::init` is idempotent and is the
+            // single owner of the tracing-subscriber registration
+            // (smctl-mcp-v1/design.md Decision 6).
+            let level = if cli.quiet {
+                smctl_log::LogLevel::Error
+            } else {
+                match cli.verbose {
+                    0 => smctl_log::LogLevel::Info,
+                    1 => smctl_log::LogLevel::Debug,
+                    _ => smctl_log::LogLevel::Trace,
+                }
+            };
+            let config = smctl_log::LoggingConfig {
+                level,
+                stderr: true,
+                file: cli.log_file.clone(),
+                ..Default::default()
+            };
+            smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let root = resolve_root()?;
+            smctl_mcp::start_server(root, smctl_mcp::Transport::Stdio).await?;
             Ok(exit_code::SUCCESS)
         }
 
