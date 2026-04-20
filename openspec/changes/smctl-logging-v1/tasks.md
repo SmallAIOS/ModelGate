@@ -26,7 +26,7 @@
 
 - [x] stderr — default active when no `--log-file`; otherwise gated on `--verbose`
 - [x] File (`--log-file <path>`) — append-only, creates parent dir if absent, `Mutex<File>` for thread safety
-- [ ] Syslog Unix socket (`--log-syslog`) — **deferred** within this change. Follow-up scope: add the `syslog` crate dep and a third transport layer. Not shipping in the first commit series; file as a follow-up task if a real target arrives before we finish.
+- [x] Syslog Unix socket (`--log-syslog`) — third transport via the `syslog` crate (Unix-only backend), `syslog_transport::SyslogWriter` `MakeWriter` adapter, open-failure fallback to stderr with a one-time `SMCTL-0099` WARN, no-op on non-Unix
 
 ## Subscriber Init
 
@@ -38,7 +38,7 @@
 ## CLI Integration
 
 - [x] Add `--log-file` / `--log-level` global flags to `smctl/src/main.rs`
-- [ ] `--log-syslog` flag — deferred with the syslog transport
+- [x] `--log-syslog` flag with `SMCTL_LOG_SYSLOG` env var, threaded through `LoggingConfig::syslog`
 - [x] Wire `SMCTL_LOG_FILE` / `SMCTL_LOG_LEVEL` env vars
 - [x] Cross-wire existing `--verbose` / `--quiet` to `LogLevel`
 - [x] Call `smctl_log::init` at the top of `main()`, after clap parsing

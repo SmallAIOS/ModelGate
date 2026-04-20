@@ -16,6 +16,7 @@
 pub mod formatter;
 pub mod msgid;
 pub mod severity;
+pub mod syslog_transport;
 
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -81,6 +82,12 @@ pub struct LoggingConfig {
     /// If set, also emit to this file (append-only).
     pub file: Option<PathBuf>,
 
+    /// If true, also emit to the local syslog Unix socket. Unix only.
+    /// On Windows, specifying `true` triggers a one-time WARN and the
+    /// syslog layer is a no-op; stderr is activated if it was not
+    /// already. Default false.
+    pub syslog: bool,
+
     /// Syslog facility for the PRI field. `local0` (16) by default.
     pub facility: u8,
 
@@ -94,6 +101,7 @@ impl Default for LoggingConfig {
             level: LogLevel::Info,
             stderr: true,
             file: None,
+            syslog: false,
             facility: 16, // local0
             app_name: "smctl".to_string(),
         }
@@ -123,6 +131,13 @@ static INSTALLED: OnceLock<()> = OnceLock::new();
 /// Idempotent: the second and subsequent calls are a no-op and return
 /// `Ok(())`. Does not panic on a second call; returns success silently
 /// to match the idempotency guarantee in the spec.
+///
+/// Syslog open-failure handling: per `specs/logging.md`, if the
+/// `syslog` transport was requested but the local Unix socket cannot
+/// be opened, this function does NOT fail. Instead it forces the
+/// stderr transport on, installs the subscriber, and emits a single
+/// `SMCTL-0099` WARN describing the fallback. Same policy on Windows,
+/// where syslog is unsupported.
 pub fn init(config: &LoggingConfig) -> Result<(), LogError> {
     if INSTALLED.get().is_some() {
         return Ok(());
@@ -130,7 +145,30 @@ pub fn init(config: &LoggingConfig) -> Result<(), LogError> {
 
     let fmt_event = Rfc5424::new(config.facility, &config.app_name);
 
-    let stderr_layer = config.stderr.then(|| {
+    // Resolve the syslog transport first. If it fails, we flip stderr
+    // on and record the reason so we can emit a WARN after the
+    // subscriber is installed.
+    let mut effective_stderr = config.stderr;
+    let mut syslog_fallback_reason: Option<String> = None;
+    let syslog_layer = if config.syslog {
+        match syslog_transport::open_unix_socket() {
+            Ok(writer) => Some(
+                fmt::Layer::default()
+                    .event_format(fmt_event.clone())
+                    .with_writer(writer)
+                    .with_ansi(false),
+            ),
+            Err(err) => {
+                effective_stderr = true;
+                syslog_fallback_reason = Some(format!("{err}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let stderr_layer = effective_stderr.then(|| {
         fmt::Layer::default()
             .event_format(fmt_event.clone())
             .with_writer(std::io::stderr)
@@ -168,11 +206,24 @@ pub fn init(config: &LoggingConfig) -> Result<(), LogError> {
     let subscriber = Registry::default()
         .with(config.level.to_filter())
         .with(stderr_layer)
-        .with(file_layer);
+        .with(file_layer)
+        .with(syslog_layer);
 
     tracing::subscriber::set_global_default(subscriber).map_err(|_| LogError::AlreadyInstalled)?;
 
     let _ = INSTALLED.set(());
+
+    // One-time WARN after the subscriber is live so it lands on every
+    // active transport (including the now-forced stderr). Does not
+    // panic, does not propagate.
+    if let Some(reason) = syslog_fallback_reason {
+        tracing::warn!(
+            msgid = %MsgId::Uncategorized,
+            reason = %reason,
+            "syslog transport unavailable; falling back to stderr"
+        );
+    }
+
     Ok(())
 }
 

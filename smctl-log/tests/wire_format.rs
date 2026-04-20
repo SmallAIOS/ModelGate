@@ -156,3 +156,29 @@ fn special_characters_in_sd_values_are_escaped() {
         "double-quote not escaped: {out}"
     );
 }
+
+// ── syslog transport — open_unix_socket does not panic ────────────
+//
+// A real `/dev/log` round-trip is out of scope: CI is not guaranteed
+// to have a local syslog daemon. These tests prove only that the
+// transport helper upholds the "Does not panic" guarantee from
+// `specs/logging.md` in the two failure modes we can reproduce:
+// open-failure on Unix (when no socket exists) and platform-absence
+// on Windows (where the function is a permanent `Err`).
+
+#[cfg(not(target_family = "unix"))]
+#[test]
+fn syslog_open_is_noop_error_on_non_unix() {
+    // On Windows / wasm / etc. the helper must always fail, never
+    // panic, and never leak a writer.
+    assert!(smctl_log::syslog_transport::open_unix_socket().is_err());
+}
+
+#[cfg(target_family = "unix")]
+#[test]
+fn syslog_open_does_not_panic_on_failure() {
+    // Under test we cannot guarantee a local syslog is present nor
+    // absent. The contract is that the call returns a Result without
+    // unwinding, regardless. Exercise it and accept either outcome.
+    let _ = smctl_log::syslog_transport::open_unix_socket();
+}
