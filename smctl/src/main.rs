@@ -51,6 +51,11 @@ struct Cli {
     #[arg(long, global = true, env = "SMCTL_LOG_FILE")]
     log_file: Option<PathBuf>,
 
+    /// Also emit RFC 5424 events to the local syslog Unix socket.
+    /// Unix only; on Windows this warns and falls back to stderr.
+    #[arg(long, global = true, env = "SMCTL_LOG_SYSLOG")]
+    log_syslog: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -372,6 +377,7 @@ fn init_tracing(cli: &Cli) -> Result<()> {
         level,
         stderr: emit_stderr,
         file: cli.log_file.clone(),
+        syslog: cli.log_syslog,
         ..Default::default()
     };
 
