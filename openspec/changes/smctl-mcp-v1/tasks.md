@@ -79,11 +79,11 @@
 
 ## Integration Testing
 
-- [ ] Test MCP initialize handshake over stdio
-- [ ] Test tool invocation round-trip (call tool → get JSON result)
-- [ ] Test resource listing and reading
-- [ ] Test SSE transport connection and tool invocation
-- [ ] Test error handling (invalid tool params, workspace not found)
+- [x] Test MCP initialize handshake over stdio (`tests/stdio_handshake.rs::initialize_and_call_workspace_status`)
+- [x] Test tool invocation round-trip for a representative tool from every family (workspace, worktree, spec, build, flow)
+- [ ] Test resource listing and reading — deferred with resources
+- [ ] Test SSE transport connection and tool invocation — deferred with SSE
+- [ ] Test error handling (invalid tool params, workspace not found) — see "Error-path MSGID coverage" in Spec Drift
 
 ## Documentation
 
@@ -95,7 +95,7 @@
 ## Verify
 
 - [x] `smctl serve --mcp --stdio` responds to MCP initialize handshake (covered by `tests/stdio_handshake.rs`)
-- [ ] All workspace/flow/spec/build tools callable via MCP — vertical slice ships `smctl_workspace_status` only
+- [x] All workspace/flow/spec/build tools callable via MCP — 20 tools across 5 families now registered; listing + representative `tools/call` assertions in `tests/stdio_handshake.rs`
 - [ ] Resources return correct data for current workspace state — resources deferred
 - [ ] SSE transport works for remote connections — deferred
 - [x] Starting the server emits `SMCTL-0200` to the configured log transports (covered by `tests/logging.rs`)
@@ -112,9 +112,7 @@ Findings from the first vertical-slice implementation pass. These were surfaced 
 - ~~**Branch-divergence with `change/smctl-logging-v1`.**~~ **Resolved.** This branch now forks from `change/smctl-logging-v1` (not `change/design-system-v1`). The `smctl-log` crate is the full RFC 5424 version from the logging branch; the seven `Mcp*` MSGID variants land as extensions to `smctl-log/src/msgid.rs` rather than a parallel minimal crate. The previous stripped-down `smctl-log` scaffold commit is gone.
 - **`SMCTL-0205` and `SMCTL-0206` are unreachable on stdio.** The MSGIDs are declared in the catalog but the stdio transport has no unexpected-disconnect or transport-fatal surface distinct from a clean peer close. They will be wired when SSE / HTTP transports land.
 - **SSE transport, streamable HTTP transport.** Deferred. Add `rmcp` SSE feature, wire `--sse --port`, add a second integration test.
-- **Remaining MCP tools.** `workspace_init/add/remove/sync`, `worktree_*`, `flow_*`, `spec_*`, `build`. Each is a thin wrapper around an existing `smctl-*` library call; follow the shape established by `smctl_workspace_status`.
+- ~~**Remaining MCP tools.**~~ **Resolved.** 19 additional tools landed across workspace (init/add/remove/sync), worktree (add/list/remove), flow (init/feature/release/hotfix), spec (new/validate/archive/list), and build. Two minor API-drift resolutions: `workspace_sync` inlines a per-repo git-pull loop because `smctl_workspace::sync` does not exist; `smctl_spec_status` is deferred because `list_specs` already carries per-spec phase + task progress.
 - **MCP resources.** `smctl://workspace/config`, `smctl://workspace/status`, etc. Not started.
 - **Error-path MSGID coverage.** Add a test that forces `smctl_workspace_status` to fail (e.g. point it at a workspace-less tempdir) and asserts `SMCTL-0204` with `tool`, `request_id`, `error_kind`, and a `remediation` field that names a real smctl subcommand.
 - **`rmcp` API divergence from the original spec draft.** The first draft of the implementation spec assumed `rmcp` constructs (e.g. `transport::channel()`, `serve_server` helpers) that the 0.8+ API does not expose by that name. Current implementation uses `rmcp::transport::stdio()` and `ServiceExt::serve` directly. Update `specs/mcp-server-impl.md` sample code in a follow-up editorial pass.
-
-## MCP Tools — Workspace (remaining)
