@@ -330,13 +330,66 @@ fn test_spec_new_duplicate_fails() {
         .assert()
         .success();
 
-    // Second create should fail
+    // Second create should fail.
+    // Stable substrings: "already exists" anchors the noun phrase (what happened);
+    // "smctl spec archive" anchors the remediation command (what to do next).
+    // Both are required by the three-part error rubric in design-system-v1.
     smctl()
         .args(["spec", "new", "dup-spec", "-w"])
         .arg(dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("already exists"));
+        .stderr(predicate::str::contains("already exists"))
+        .stderr(predicate::str::contains("smctl spec archive"));
+}
+
+// ── Error-message remediation clauses (smctl-errors-v1) ──────────────
+//
+// These tests pin the three-part error contract: each error message must
+// carry a remediation clause naming a real `smctl` subcommand. Stable
+// substring matching keeps wording polish cheap.
+
+#[test]
+fn test_spec_not_found_error_names_spec_list() {
+    let dir = tempfile::tempdir().unwrap();
+
+    smctl()
+        .args(["workspace", "init", "--name", "nf-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // Validating a nonexistent spec must surface the spec-list remediation.
+    // Substring `smctl spec list` is the executable remediation clause.
+    smctl()
+        .args(["spec", "validate", "does-not-exist", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"))
+        .stderr(predicate::str::contains("smctl spec list"));
+}
+
+#[test]
+fn test_workspace_remove_missing_repo_names_status() {
+    let dir = tempfile::tempdir().unwrap();
+
+    smctl()
+        .args(["workspace", "init", "--name", "rm-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // Removing an unknown repo must point at `smctl workspace status` so the
+    // operator can see the configured repo names.
+    // Substring `smctl workspace status` is the executable remediation clause.
+    smctl()
+        .args(["workspace", "remove", "ghost-repo", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found in workspace"))
+        .stderr(predicate::str::contains("smctl workspace status"));
 }
 
 // ── Config commands ──────────────────────────────────────────────────
