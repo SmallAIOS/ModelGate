@@ -112,7 +112,9 @@ impl SmctlConfig {
             "user.no_color" => {
                 self.user.no_color = value.parse().context("expected true or false")?
             }
-            _ => anyhow::bail!("unknown config key: {key}"),
+            _ => anyhow::bail!(
+                "unknown config key: {key}. No config field matches that path, so nothing was set. Run `smctl config --help` to see valid keys, or `smctl config show` to inspect current values."
+            ),
         }
         Ok(())
     }

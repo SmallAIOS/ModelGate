@@ -1017,7 +1017,9 @@ async fn run(cli: Cli) -> Result<i32> {
                     let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
 
                     if !info.has_tasks {
-                        anyhow::bail!("spec '{spec_name}' has no tasks.md");
+                        anyhow::bail!(
+                            "spec '{spec_name}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {spec_name}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {spec_name}` and recreating with `smctl spec new {spec_name}`."
+                        );
                     }
 
                     let tasks_path = info.path.join("tasks.md");

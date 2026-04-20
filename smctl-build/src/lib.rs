@@ -312,7 +312,11 @@ fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
     let repo_path = root.join(repo.local_path());
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
-        anyhow::bail!("empty command");
+        anyhow::bail!(
+            "empty command for repo '{}'. There is no shell invocation to run, so the build step cannot proceed. Set a non-empty `build_cmd` for this repo in `.smctl/workspace.toml`, or remove the repo with `smctl workspace remove {}`.",
+            repo.name,
+            repo.name
+        );
     }
 
     let output = Command::new(parts[0])
