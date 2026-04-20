@@ -227,7 +227,9 @@ pub fn add_repo(
     path: Option<&str>,
 ) -> Result<()> {
     if manifest.find_repo(name).is_some() {
-        anyhow::bail!("repo '{name}' already exists in workspace");
+        anyhow::bail!(
+            "repo '{name}' already exists in workspace. The add was rejected to avoid overwriting config. Run `smctl workspace remove {name}` first, or choose a different name."
+        );
     }
 
     manifest.repos.push(RepoConfig {
@@ -251,7 +253,9 @@ pub fn remove_repo(manifest: &mut WorkspaceManifest, name: &str) -> Result<()> {
     let len = manifest.repos.len();
     manifest.repos.retain(|r| r.name != name);
     if manifest.repos.len() == len {
-        anyhow::bail!("repo '{name}' not found in workspace");
+        anyhow::bail!(
+            "repo '{name}' not found in workspace. The remove had no target to act on. Run `smctl workspace status` to list configured repos."
+        );
     }
     tracing::info!("removed repo '{name}' from workspace");
     Ok(())
@@ -393,7 +397,7 @@ pub mod worktree {
                 if !result.status.success() {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     anyhow::bail!(
-                        "failed to add worktree for {} at {}: {}",
+                        "failed to add worktree for {} at {}: {}. Git refused the worktree creation, so no worktree set was produced. Inspect existing worktrees with `smctl worktree list`, then retry or remove the stale entry with `smctl worktree remove <name>`.",
                         repo.name,
                         wt_path.display(),
                         stderr.trim()
@@ -422,7 +426,9 @@ pub mod worktree {
     ) -> Result<()> {
         let base = root.join(&manifest.worktree.base_dir).join(name);
         if !base.exists() {
-            anyhow::bail!("worktree set '{name}' does not exist");
+            anyhow::bail!(
+                "worktree set '{name}' does not exist. The remove had no target to act on. Run `smctl worktree list` to see active worktree sets, or create one with `smctl worktree add {name}`."
+            );
         }
 
         for repo in &manifest.repos {
@@ -467,7 +473,9 @@ pub mod worktree {
     pub fn worktree_path(root: &Path, manifest: &WorkspaceManifest, name: &str) -> Result<PathBuf> {
         let base = root.join(&manifest.worktree.base_dir).join(name);
         if !base.exists() {
-            anyhow::bail!("worktree set '{name}' does not exist");
+            anyhow::bail!(
+                "worktree set '{name}' does not exist. The path lookup has no worktree to return. Run `smctl worktree list` to see active worktree sets, or create one with `smctl worktree add {name}`."
+            );
         }
         Ok(base)
     }
