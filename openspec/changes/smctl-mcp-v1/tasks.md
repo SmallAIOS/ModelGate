@@ -58,10 +58,11 @@
 
 ## MCP Tools — OpenSpec
 
-- [ ] `smctl_spec_new` — Create spec folder and branch
-- [ ] `smctl_spec_status` — Show spec progress
-- [ ] `smctl_spec_validate` — Check completeness
-- [ ] `smctl_spec_archive` — Archive completed spec
+- [x] `smctl_spec_new` — Create spec folder and branch
+- [ ] `smctl_spec_status` — Show spec progress (deferred; `smctl_spec_list` covers the listing case and includes per-spec phase + task progress)
+- [x] `smctl_spec_validate` — Check completeness
+- [x] `smctl_spec_archive` — Archive completed spec
+- [x] `smctl_spec_list` — List every spec with phase + task progress
 
 ## MCP Tools — Build
 
