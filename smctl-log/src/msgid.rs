@@ -139,10 +139,7 @@ mod tests {
             Severity::Informational
         );
         assert_eq!(MsgId::McpToolFailed.default_severity(), Severity::Error);
-        assert_eq!(
-            MsgId::McpTransportFatal.default_severity(),
-            Severity::Error
-        );
+        assert_eq!(MsgId::McpTransportFatal.default_severity(), Severity::Error);
         assert_eq!(
             MsgId::McpClientDisconnected.default_severity(),
             Severity::Warning
