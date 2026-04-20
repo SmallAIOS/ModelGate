@@ -48,12 +48,13 @@
 
 ## MCP Tools — Git Flow
 
-- [ ] `smctl_flow_feature_start` — Start feature branch
-- [ ] `smctl_flow_feature_finish` — Merge feature to develop
-- [ ] `smctl_flow_release_start` — Create release branch
-- [ ] `smctl_flow_release_finish` — Finalize release
-- [ ] `smctl_flow_hotfix_start` — Start hotfix
-- [ ] `smctl_flow_hotfix_finish` — Merge hotfix
+- [x] `smctl_flow_init` — Ensure develop branch exists in every repo
+- [x] `smctl_flow_feature_start` — Start feature branch
+- [x] `smctl_flow_feature_finish` — Merge feature to develop
+- [x] `smctl_flow_release_start` — Create release branch
+- [x] `smctl_flow_release_finish` — Finalize release
+- [x] `smctl_flow_hotfix_start` — Start hotfix
+- [x] `smctl_flow_hotfix_finish` — Merge hotfix
 
 ## MCP Tools — OpenSpec
 

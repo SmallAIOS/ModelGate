@@ -109,6 +109,47 @@ pub struct WorktreeRemoveParams {
     pub force: Option<bool>,
 }
 
+/// Input schema for the `smctl_flow_init` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FlowInitParams {}
+
+/// Input schema for flow feature/hotfix start tools.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FlowStartParams {
+    /// Branch-name suffix; the full branch is the configured prefix
+    /// followed by this value.
+    pub name: String,
+    /// Optional subset of repo names to act on. Omit to act on every
+    /// repo.
+    #[serde(default)]
+    pub repos: Option<Vec<String>>,
+}
+
+/// Input schema for flow feature/hotfix finish tools.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FlowFinishParams {
+    /// Branch-name suffix that was passed to `start`.
+    pub name: String,
+}
+
+/// Input schema for the `smctl_flow_release_start` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FlowReleaseStartParams {
+    /// Release version identifier appended to the release prefix.
+    pub version: String,
+    /// Optional subset of repo names to act on. Omit to act on every
+    /// repo.
+    #[serde(default)]
+    pub repos: Option<Vec<String>>,
+}
+
+/// Input schema for the `smctl_flow_release_finish` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FlowReleaseFinishParams {
+    /// Release version identifier that was passed to `release_start`.
+    pub version: String,
+}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -565,6 +606,297 @@ impl SmctlServer {
         let payload = serde_json::json!({ "removed": params.name, "force": force });
         Ok(CallToolResult::success(vec![Content::text(
             Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Initialize git flow branches across every repo.
+    #[tool(
+        name = "smctl_flow_init",
+        description = "Ensure the configured develop branch exists in every repo. Creates it from the main branch when missing."
+    )]
+    async fn flow_init(
+        &self,
+        Parameters(_): Parameters<FlowInitParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+
+        let result = tokio::task::spawn_blocking(move || smctl_flow::init(&root, &manifest))
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Flow init task failed to join. {e}. \
+                         Retry the tool call, or run `smctl flow init` to reproduce."
+                    ),
+                    None,
+                )
+            })?
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!(
+                        "Flow init failed. {e}. \
+                         Run `smctl workspace status` to confirm every repo is cloned, then retry."
+                    ),
+                    None,
+                )
+            })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Start a feature branch across the selected repos.
+    #[tool(
+        name = "smctl_flow_feature_start",
+        description = "Start a feature branch across the selected repos. Uses the configured feature prefix; base branch is develop."
+    )]
+    async fn flow_feature_start(
+        &self,
+        Parameters(params): Parameters<FlowStartParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+        let repos = params.repos.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            smctl_flow::feature_start(&root, &manifest, &name, repos.as_deref())
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Feature start task failed to join. {e}. \
+                     Retry the tool call, or run `smctl flow feature start {}` to reproduce.",
+                    params.name
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Feature start failed. {e}. \
+                     Run `smctl flow init` first if the develop branch is missing, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Finish a feature branch: merge into develop across every repo.
+    #[tool(
+        name = "smctl_flow_feature_finish",
+        description = "Merge a feature branch into develop across every repo. Pass the same name that was used for feature_start."
+    )]
+    async fn flow_feature_finish(
+        &self,
+        Parameters(params): Parameters<FlowFinishParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+
+        let result =
+            tokio::task::spawn_blocking(move || smctl_flow::feature_finish(&root, &manifest, &name))
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Feature finish task failed to join. {e}. \
+                             Retry the tool call, or run `smctl flow feature finish {}` to reproduce.",
+                            params.name
+                        ),
+                        None,
+                    )
+                })?
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Feature finish failed. {e}. \
+                             Resolve the merge conflict in the reported repo, commit, then retry."
+                        ),
+                        None,
+                    )
+                })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Start a release branch across the selected repos.
+    #[tool(
+        name = "smctl_flow_release_start",
+        description = "Start a release branch across the selected repos. Uses the configured release prefix; base branch is develop."
+    )]
+    async fn flow_release_start(
+        &self,
+        Parameters(params): Parameters<FlowReleaseStartParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let version = params.version.clone();
+        let repos = params.repos.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            smctl_flow::release_start(&root, &manifest, &version, repos.as_deref())
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Release start task failed to join. {e}. \
+                     Retry the tool call, or run `smctl flow release start {}` to reproduce.",
+                    params.version
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Release start failed. {e}. \
+                     Run `smctl flow init` first if develop is missing, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Finish a release: merge into main and develop across every repo.
+    #[tool(
+        name = "smctl_flow_release_finish",
+        description = "Merge a release branch into main and develop across every repo. Pass the same version that was used for release_start."
+    )]
+    async fn flow_release_finish(
+        &self,
+        Parameters(params): Parameters<FlowReleaseFinishParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let version = params.version.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            smctl_flow::release_finish(&root, &manifest, &version)
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Release finish task failed to join. {e}. \
+                     Retry the tool call, or run `smctl flow release finish {}` to reproduce.",
+                    params.version
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Release finish failed. {e}. \
+                     Resolve the merge conflict in the reported repo, commit, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Start a hotfix branch across the selected repos.
+    #[tool(
+        name = "smctl_flow_hotfix_start",
+        description = "Start a hotfix branch across the selected repos. Uses the configured hotfix prefix; base branch is main."
+    )]
+    async fn flow_hotfix_start(
+        &self,
+        Parameters(params): Parameters<FlowStartParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+        let repos = params.repos.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            smctl_flow::hotfix_start(&root, &manifest, &name, repos.as_deref())
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Hotfix start task failed to join. {e}. \
+                     Retry the tool call, or run `smctl flow hotfix start {}` to reproduce.",
+                    params.name
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Hotfix start failed. {e}. \
+                     Run `smctl workspace status` to confirm main is present in every repo, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Finish a hotfix: merge into main and develop across every repo.
+    #[tool(
+        name = "smctl_flow_hotfix_finish",
+        description = "Merge a hotfix branch into main and develop across every repo. Pass the same name that was used for hotfix_start."
+    )]
+    async fn flow_hotfix_finish(
+        &self,
+        Parameters(params): Parameters<FlowFinishParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let name = params.name.clone();
+
+        let result =
+            tokio::task::spawn_blocking(move || smctl_flow::hotfix_finish(&root, &manifest, &name))
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Hotfix finish task failed to join. {e}. \
+                             Retry the tool call, or run `smctl flow hotfix finish {}` to reproduce.",
+                            params.name
+                        ),
+                        None,
+                    )
+                })?
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Hotfix finish failed. {e}. \
+                             Resolve the merge conflict in the reported repo, commit, then retry."
+                        ),
+                        None,
+                    )
+                })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
         )]))
     }
 }
