@@ -50,7 +50,7 @@ Apply these without being asked:
 - **Status vocabulary**: reuse the canonical terms (`clean` / `dirty`, `ahead N` / `behind N`, `pending` / `running` / `passed` / `failed`, `active` / `archived`, `verified` / `unverified`, `present` / `absent`). Introducing a new term requires updating the spec first.
 - **Error messages**: three parts — what happened, what it means, what to do next (an executable command, not advice).
 - **Numbers**: space before unit (`15 MB`, `< 50 ms`), comma thousands (`4,143`), SI durations.
-- **Logging**: conforms to RFC 5424 (syslog). Severity names are `Emergency` / `Alert` / `Critical` / `Error` / `Warning` / `Notice` / `Informational` / `Debug`. Use `tracing` with an RFC 5424 formatter; never invent a log wire format. STRUCTURED-DATA for contextual fields, not ad-hoc string interpolation. MSGIDs are stable. This governs `tracing` / `log` output, not interactive CLI UX.
+- **Logging**: conforms to RFC 5424 (syslog). Severity names are `Emergency` / `Alert` / `Critical` / `Error` / `Warning` / `Notice` / `Informational` / `Debug`. Use `tracing` with an RFC 5424 formatter; never invent a log wire format. STRUCTURED-DATA for contextual fields, not ad-hoc string interpolation. MSGIDs are stable. This governs `tracing` / `log` output, not interactive CLI UX. The canonical MSGID catalog (namespace `SMCTL-NNNN`, per-crate range reservations) and the `tracing::Level` → RFC 5424 severity mapping table both live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that file is authoritative for any new MSGID allocation, facility choice, or transport decision.
 
 ## Provisional items
 
