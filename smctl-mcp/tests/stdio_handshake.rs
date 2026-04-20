@@ -30,6 +30,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_spec_validate",
     "smctl_spec_archive",
     "smctl_spec_list",
+    "smctl_build",
 ];
 
 #[tokio::test]
@@ -140,6 +141,27 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     assert!(
         specs_json.get("specs").is_some(),
         "expected specs field in {specs_text}"
+    );
+
+    // Build family: with an empty workspace, build reports an empty
+    // results array and all_passed=true.
+    let build = client
+        .call_tool(CallToolRequestParams::new("smctl_build"))
+        .await?;
+    assert!(
+        !build.is_error.unwrap_or(false),
+        "smctl_build reported an error payload: {build:?}"
+    );
+    let build_text = build
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_build should carry text content");
+    let build_json: serde_json::Value = serde_json::from_str(build_text)?;
+    assert!(
+        build_json.get("results").is_some(),
+        "expected results field in {build_text}"
     );
 
     // Flow family: init with no repos completes and returns a

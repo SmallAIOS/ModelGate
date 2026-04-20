@@ -162,6 +162,24 @@ pub struct SpecByNameParams {
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpecListParams {}
 
+/// Input schema for the `smctl_build` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct BuildParams {
+    /// Build only this repo and its transitive dependencies. Omit to
+    /// build every repo.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Run independent repos in parallel when true.
+    #[serde(default)]
+    pub parallel: Option<bool>,
+    /// Run configured tests after each repo builds.
+    #[serde(default)]
+    pub test: Option<bool>,
+    /// Run each repo's configured clean command before building.
+    #[serde(default)]
+    pub clean: Option<bool>,
+}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -1077,6 +1095,60 @@ impl SmctlServer {
         let payload = serde_json::json!({ "specs": specs });
         Ok(CallToolResult::success(vec![Content::text(
             Self::to_json_text(&payload)?,
+        )]))
+    }
+
+    /// Build repos in dependency order.
+    #[tool(
+        name = "smctl_build",
+        description = "Build repos in dependency order. Pass repo to scope the build; enable parallel, test, or clean as needed."
+    )]
+    async fn build(
+        &self,
+        Parameters(params): Parameters<BuildParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let manifest = self.load_manifest()?;
+        let root = (*self.workspace_root).clone();
+        let repo = params.repo.clone();
+        let parallel = params.parallel.unwrap_or(false);
+        let run_tests = params.test.unwrap_or(false);
+        let clean_first = params.clean.unwrap_or(false);
+
+        let report = tokio::task::spawn_blocking(move || {
+            if parallel {
+                smctl_build::build_parallel(
+                    &root,
+                    &manifest,
+                    repo.as_deref(),
+                    run_tests,
+                    clean_first,
+                )
+            } else {
+                smctl_build::build(&root, &manifest, repo.as_deref(), run_tests, clean_first)
+            }
+        })
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Build task failed to join. {e}. \
+                     Retry the tool call, or run `smctl build` to reproduce."
+                ),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Build failed. {e}. \
+                     Inspect the reported repo's build output, fix the error, then retry."
+                ),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&serde_json::to_value(&report).unwrap_or_default())?,
         )]))
     }
 }
