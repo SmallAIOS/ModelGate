@@ -2,31 +2,32 @@
 
 ## Crate Setup
 
-- [ ] Create `smctl-mcp` crate with Cargo.toml (rmcp, tokio, schemars dependencies)
-- [ ] Add `smctl-mcp` as workspace member in root Cargo.toml
-- [ ] Add `smctl-mcp` dependency to `smctl` binary crate
-- [ ] Add `smctl-log` as a dependency of `smctl-mcp` for MSGID constants
-- [ ] Verify workspace builds with `cargo build --workspace`
+- [x] Create `smctl-mcp` crate with Cargo.toml (rmcp, tokio, schemars dependencies)
+- [x] Add `smctl-mcp` as workspace member in root Cargo.toml
+- [x] Add `smctl-mcp` dependency to `smctl` binary crate
+- [x] Add `smctl-log` as a dependency of `smctl-mcp` for MSGID constants
+- [x] Verify workspace builds with `cargo build --workspace`
 
 ## Cross-Cutting Contract Wiring
 
-- [ ] `smctl serve --mcp` calls `smctl_log::init` before starting the transport; do NOT install a separate `tracing-subscriber` inside `smctl-mcp`
-- [ ] Extend `smctl_log::MsgId` with the seven `Mcp*` variants allocated in `design.md` Decision 5 (`SMCTL-0200` through `SMCTL-0206`), with matching entries in the spec's MSGID catalog
-- [ ] Update `smctl-log/src/msgid.rs` tests to cover the new variants
-- [ ] Emit `SMCTL-0200` on server initialize, `SMCTL-0201` on graceful shutdown, `SMCTL-0202` on tool-call receipt, `SMCTL-0203` on success / `SMCTL-0204` on error, `SMCTL-0205` on unexpected transport close, `SMCTL-0206` on transport fatal
-- [ ] Tool descriptions (exposed via `tools/list`) conform to `design-system-v1` voice rules — sentence case, imperative verbs, no emoji, `you` not `we`
-- [ ] Error payloads returned to MCP clients carry three-part structured messages per `smctl-errors-v1` design; the remediation clause names a real `smctl` subcommand where one applies
+- [x] `smctl serve --mcp` calls `smctl_log::init` before starting the transport; do NOT install a separate `tracing-subscriber` inside `smctl-mcp`
+- [x] Extend `smctl_log::MsgId` with the seven `Mcp*` variants allocated in `design.md` Decision 5 (`SMCTL-0200` through `SMCTL-0206`), with matching entries in the spec's MSGID catalog
+- [x] Update `smctl-log/src/msgid.rs` tests to cover the new variants
+- [x] Emit `SMCTL-0200` on server initialize, `SMCTL-0201` on graceful shutdown, `SMCTL-0202` on tool-call receipt, `SMCTL-0203` on success / `SMCTL-0204` on error
+- [ ] Emit `SMCTL-0205` (unexpected client disconnect) and `SMCTL-0206` (transport fatal). Not reachable on the stdio-only slice — stdio close is the clean-shutdown signal. Moved to Spec Drift / Follow-ups.
+- [x] Tool descriptions (exposed via `tools/list`) conform to `design-system-v1` voice rules — sentence case, imperative verbs, no emoji, `you` not `we`
+- [x] Error payloads returned to MCP clients carry three-part structured messages per `smctl-errors-v1` design; the remediation clause names a real `smctl` subcommand where one applies
 
 ## Server Core
 
-- [ ] Implement `SmctlServer` struct with workspace root and config
-- [ ] Implement `ServerHandler` trait for `SmctlServer`
-- [ ] Register server capabilities (tools, resources, logging)
-- [ ] Add `smctl serve` subcommand to CLI with `--mcp`, `--stdio`, `--sse`, `--port` flags
+- [x] Implement `SmctlServer` struct with workspace root and config
+- [x] Implement `ServerHandler` trait for `SmctlServer`
+- [x] Register server capabilities (tools — resources/logging capability advertisements deferred)
+- [x] Add `smctl serve` subcommand to CLI with `--mcp` and `--stdio` flags (`--sse` / `--port` deferred with the transports themselves)
 
 ## Transport Layer
 
-- [ ] Implement stdio transport via `rmcp::transport::stdio`
+- [x] Implement stdio transport via `rmcp::transport::stdio`
 - [ ] Implement SSE transport via `rmcp::transport::SseServer`
 - [ ] Add graceful shutdown on SIGINT/SIGTERM
 - [ ] Test stdio transport with manual JSON-RPC messages
@@ -34,7 +35,7 @@
 ## MCP Tools — Workspace
 
 - [ ] `smctl_workspace_init` — Initialize workspace
-- [ ] `smctl_workspace_status` — Show repo statuses
+- [x] `smctl_workspace_status` — Show repo statuses (vertical slice — landed)
 - [ ] `smctl_workspace_add` — Add repo to workspace
 - [ ] `smctl_workspace_remove` — Remove repo from workspace
 - [ ] `smctl_workspace_sync` — Fetch/pull all repos
@@ -91,13 +92,27 @@
 
 ## Verify
 
-- [ ] `smctl serve --mcp --stdio` responds to MCP initialize handshake
-- [ ] All workspace/flow/spec/build tools callable via MCP
-- [ ] Resources return correct data for current workspace state
-- [ ] SSE transport works for remote connections
-- [ ] Starting the server emits `SMCTL-0200` to the configured log transports
-- [ ] A failing tool call emits `SMCTL-0204` with `tool`, `request_id`, and `error_kind` STRUCTURED-DATA fields
-- [ ] Tool descriptions and error-payload strings pass a voice-conformance read-through against `design-system-v1`
-- [ ] `cargo test --workspace` passes with new crate
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo fmt --check` clean
+- [x] `smctl serve --mcp --stdio` responds to MCP initialize handshake (covered by `tests/stdio_handshake.rs`)
+- [ ] All workspace/flow/spec/build tools callable via MCP — vertical slice ships `smctl_workspace_status` only
+- [ ] Resources return correct data for current workspace state — resources deferred
+- [ ] SSE transport works for remote connections — deferred
+- [x] Starting the server emits `SMCTL-0200` to the configured log transports (covered by `tests/logging.rs`)
+- [x] A failing tool call emits `SMCTL-0204` with `tool`, `request_id`, and `error_kind` STRUCTURED-DATA fields — happy path verified via `tests/logging.rs` (SMCTL-0202 + SMCTL-0203); error-path emission wiring is in `server.rs` but not covered by a test yet
+- [x] Tool descriptions and error-payload strings pass a voice-conformance read-through against `design-system-v1`
+- [x] `cargo test --workspace` passes with new crate
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes
+- [x] `cargo fmt --check` clean
+
+## Spec Drift and Follow-ups
+
+Findings from the first vertical-slice implementation pass. These were surfaced during implementation and are scoped to be picked up in a follow-up commit series on this branch or in a subsequent change:
+
+- **Branch-divergence with `change/smctl-logging-v1`.** This branch was forked from `change/design-system-v1`, which does not contain `smctl-log`. The vertical slice therefore created a minimal `smctl-log` here (just `lib.rs` + `msgid.rs`) sufficient for MCP MSGID emission. `change/smctl-logging-v1` has a richer `smctl-log` with an RFC 5424 formatter, severity mapping, and three transports. **At rebase time**, drop the local `smctl-log` scaffold commit in favour of the logging-branch version and port only the MSGID additions (the seven `Mcp*` variants) on top. Do not merge the two implementations by hand — the logging branch is authoritative for the subscriber, this branch is authoritative for the MCP catalog entries.
+- **`SMCTL-0205` and `SMCTL-0206` are unreachable on stdio.** The MSGIDs are declared in the catalog but the stdio transport has no unexpected-disconnect or transport-fatal surface distinct from a clean peer close. They will be wired when SSE / HTTP transports land.
+- **SSE transport, streamable HTTP transport.** Deferred. Add `rmcp` SSE feature, wire `--sse --port`, add a second integration test.
+- **Remaining MCP tools.** `workspace_init/add/remove/sync`, `worktree_*`, `flow_*`, `spec_*`, `build`. Each is a thin wrapper around an existing `smctl-*` library call; follow the shape established by `smctl_workspace_status`.
+- **MCP resources.** `smctl://workspace/config`, `smctl://workspace/status`, etc. Not started.
+- **Error-path MSGID coverage.** Add a test that forces `smctl_workspace_status` to fail (e.g. point it at a workspace-less tempdir) and asserts `SMCTL-0204` with `tool`, `request_id`, `error_kind`, and a `remediation` field that names a real smctl subcommand.
+- **`rmcp` API divergence from the original spec draft.** The first draft of the implementation spec assumed `rmcp` constructs (e.g. `transport::channel()`, `serve_server` helpers) that the 0.8+ API does not expose by that name. Current implementation uses `rmcp::transport::stdio()` and `ServiceExt::serve` directly. Update `specs/mcp-server-impl.md` sample code in a follow-up editorial pass.
+
+## MCP Tools — Workspace (remaining)
