@@ -383,3 +383,41 @@ fn test_completions_bash() {
         .success()
         .stdout(predicate::str::contains("smctl"));
 }
+
+// ── Logging (smctl-logging-v1) ───────────────────────────────────────
+
+#[test]
+fn test_log_file_emits_rfc5424_workspace_init() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("smctl.log");
+
+    smctl()
+        .args(["workspace", "init", "--name", "log-ws", "-w"])
+        .arg(dir.path())
+        .arg("--log-file")
+        .arg(&log_path)
+        .assert()
+        .success();
+
+    let log = std::fs::read_to_string(&log_path).expect("log file was not written");
+
+    // PRI for local0(16) × 8 + Informational(6) = 134
+    assert!(log.contains("<134>1 "), "missing PRI header: {log}");
+    assert!(log.contains(" smctl "), "missing APP-NAME: {log}");
+    assert!(log.contains(" SMCTL-0001 "), "missing MSGID: {log}");
+    assert!(
+        log.contains("[SMCTL@32473"),
+        "missing STRUCTURED-DATA: {log}"
+    );
+    assert!(log.contains("name=\"log-ws\""), "missing name field: {log}");
+    assert!(log.ends_with('\n'), "missing trailing newline: {log}");
+}
+
+#[test]
+fn test_log_level_rejects_bad_value() {
+    smctl()
+        .args(["--log-level", "banana", "workspace", "status"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown log level"));
+}

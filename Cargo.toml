@@ -5,6 +5,7 @@ members = [
     "smctl-flow",
     "smctl-spec",
     "smctl-build",
+    "smctl-log",
 ]
 resolver = "3"
 
