@@ -33,7 +33,7 @@
 - [x] `smctl_log::init(config: &LoggingConfig)` — composes stderr + file layers per config
 - [x] `LoggingConfig` struct — `level`, `stderr`, `file`, `facility`, `app_name`
 - [x] `init` is idempotent via `OnceLock` — second call is a silent no-op
-- [ ] Config precedence resolver for `workspace.toml` `[logging]` — deferred along with the manifest schema (below)
+- [x] Config precedence resolver for `workspace.toml` `[logging]` — CLI > env > manifest > defaults in `smctl::init_tracing`
 
 ## CLI Integration
 
@@ -45,7 +45,7 @@
 
 ## Workspace Manifest Schema
 
-- [ ] Add `[logging]` section to `smctl-workspace::WorkspaceManifest` — **deferred** within this change. First commit series exposes logging only via CLI flags and env vars. Follow-up adds the manifest schema + precedence resolver.
+- [x] Add `[logging]` section to `smctl-workspace::WorkspaceManifest` — optional `LoggingManifestSection` with `transports`, `file`, `facility`, `level`; facility names validated at parse time against the spec's table; `facility_code()` helper exposed for the CLI resolver; round-trip save/load test
 
 ## Instrumentation (initial events)
 
