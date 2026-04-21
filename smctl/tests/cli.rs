@@ -807,3 +807,113 @@ fn test_quality_unsafe_json_output_is_structurally_valid() {
         assert!(obj.contains_key("remediation"), "missing 'remediation' key");
     }
 }
+
+/// Probe whether cargo-modules is installed. Used to skip the dsm
+/// integration test gracefully on machines / CI environments that do not
+/// have the tool yet.
+fn cargo_modules_present() -> bool {
+    std::process::Command::new("cargo")
+        .args(["modules", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn test_quality_dsm_help_is_sentence_case() {
+    // Voice check: the help text is sentence case, imperative, no emoji.
+    smctl()
+        .args(["quality", "dsm", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Build a module dependency structure matrix and detect cycles",
+        ));
+}
+
+#[test]
+fn test_quality_dsm_missing_tool_emits_three_part_error() {
+    // When cargo-modules is absent, the CLI must surface a three-part
+    // message (what happened / what it means / what to do next). Under
+    // assert_cmd, stdout is not a TTY so the CLI renders the error as
+    // JSON (per safety-quality-v1/design.md Decision 9); we assert the
+    // three-part text is present in that JSON payload.
+    if cargo_modules_present() {
+        eprintln!("skipping: cargo-modules is installed; this path is only reachable without it");
+        return;
+    }
+
+    let output = smctl()
+        .args(["quality", "dsm"])
+        .output()
+        .expect("failed to run smctl quality dsm");
+    assert!(!output.status.success(), "expected non-zero exit");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.contains("cargo-modules is not installed"),
+        "missing 'what happened' line. got: {combined}"
+    );
+    assert!(
+        combined.contains("cargo install cargo-modules"),
+        "missing remediation line. got: {combined}"
+    );
+}
+
+#[test]
+fn test_quality_dsm_json_output_is_structurally_valid() {
+    // Detection-and-skip: if cargo-modules is not installed, the JSON path
+    // still returns valid JSON (an error object), and we verify that shape.
+    // If cargo-modules IS installed, we verify the dsm-report JSON shape.
+    // Either way, stdout must parse as JSON.
+    let output = smctl()
+        .args(["quality", "dsm", "--json"])
+        .output()
+        .expect("failed to run smctl quality dsm --json");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout was:\n{stdout}"));
+
+    assert!(
+        value.is_object(),
+        "expected top-level JSON object, got: {value}"
+    );
+
+    if cargo_modules_present() {
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("root"), "report missing 'root' key");
+        assert!(obj.contains_key("cycles"), "report missing 'cycles' key");
+        assert!(
+            obj.contains_key("cycle_count"),
+            "report missing 'cycle_count' key"
+        );
+        assert!(
+            obj.contains_key("crates_scanned"),
+            "report missing 'crates_scanned' key"
+        );
+        assert!(obj.contains_key("fail"), "report missing 'fail' key");
+        assert!(
+            obj.contains_key("duration_ms"),
+            "report missing 'duration_ms' key"
+        );
+        assert!(obj["cycles"].is_array(), "'cycles' must be an array");
+        assert!(
+            obj["crates_scanned"].is_array(),
+            "'crates_scanned' must be an array"
+        );
+    } else {
+        let obj = value.as_object().unwrap();
+        assert_eq!(
+            obj.get("error").and_then(|v| v.as_str()),
+            Some("tool_missing"),
+            "expected error=tool_missing when cargo-modules is absent"
+        );
+        assert!(obj.contains_key("remediation"), "missing 'remediation' key");
+    }
+}

@@ -9,12 +9,13 @@
 //! `smctl-log` MSGID catalog but never installs its own subscriber. The
 //! `smctl` binary (or any embedder) owns the subscriber.
 //!
-//! Current scope: the `audit`, `deps`, and `unsafe` verbs are implemented
-//! end-to-end. The remaining verbs are reserved in the MSGID catalog but
-//! deferred to follow-up changes.
+//! Current scope: the `audit`, `deps`, `unsafe`, and `dsm` verbs are
+//! implemented end-to-end. The remaining verbs are reserved in the MSGID
+//! catalog but deferred to follow-up changes.
 
 pub mod audit;
 pub mod deps;
+pub mod dsm;
 #[path = "unsafe_code.rs"]
 pub mod unsafe_scan;
 
@@ -23,4 +24,5 @@ pub use audit::{
     run_audit,
 };
 pub use deps::{DepsError, DepsReport, UnusedDependency, cargo_machete_available, run_deps};
+pub use dsm::{DsmCycle, DsmError, DsmReport, cargo_modules_available, run_dsm};
 pub use unsafe_scan::{UnsafeCrate, UnsafeError, UnsafeReport, cargo_geiger_available, run_unsafe};
