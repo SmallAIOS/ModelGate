@@ -22,14 +22,17 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, Implementation, ListResourceTemplatesResult,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResult, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smctl_log::MsgId;
+
+use crate::resources;
 
 /// Input schema for the `smctl_workspace_status` tool.
 ///
@@ -225,6 +228,140 @@ impl SmctlServer {
             )
         })
     }
+
+    /// Dispatch a `resources/read` request to the right reader.
+    ///
+    /// Returns `(ReadErrorKind, ErrorData)` on failure so the caller
+    /// can record the classifier on `SMCTL-0208` before unwrapping the
+    /// `ErrorData` that goes back to the client.
+    async fn dispatch_read_resource(
+        &self,
+        uri: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        match uri {
+            resources::URI_WORKSPACE_CONFIG => self.read_workspace_config(uri).await,
+            resources::URI_WORKSPACE_STATUS => self.read_workspace_status(uri).await,
+            resources::URI_FLOW_BRANCHES => self.read_flow_branches(uri).await,
+            other => Err((
+                resources::ReadErrorKind::UnknownUri,
+                ErrorData::resource_not_found(
+                    format!(
+                        "No resource registered for {other}. \
+                         Call `resources/list` to enumerate supported URIs."
+                    ),
+                    None,
+                ),
+            )),
+        }
+    }
+
+    async fn read_workspace_config(
+        &self,
+        uri: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        let content = resources::read_workspace_toml(&self.workspace_root)
+            .map_err(|e| (resources::ReadErrorKind::ManifestMissing, e))?;
+        Ok(resources::toml_result(uri, content))
+    }
+
+    async fn read_workspace_status(
+        &self,
+        uri: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        let manifest = self
+            .load_manifest()
+            .map_err(|e| (resources::ReadErrorKind::ManifestMissing, e))?;
+
+        let mut statuses = Vec::with_capacity(manifest.repos.len());
+        for repo in &manifest.repos {
+            match smctl_workspace::repo_status(&self.workspace_root, repo) {
+                Ok(status) => {
+                    statuses.push(serde_json::to_value(&status).map_err(|e| {
+                        (
+                            resources::ReadErrorKind::SerializationFailed,
+                            resources::read_failed(
+                                uri,
+                                format!(
+                                    "Status serialization failed. {e}. \
+                                     Retry the read or run `smctl workspace status` \
+                                     to reproduce."
+                                ),
+                            ),
+                        )
+                    })?);
+                }
+                Err(e) => {
+                    statuses.push(serde_json::json!({
+                        "name": repo.name,
+                        "error": format!("{e}"),
+                    }));
+                }
+            }
+        }
+
+        let payload = serde_json::json!({ "repos": statuses });
+        resources::json_result(uri, &payload)
+            .map_err(|e| (resources::ReadErrorKind::SerializationFailed, e))
+    }
+
+    async fn read_flow_branches(
+        &self,
+        uri: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        let manifest = self
+            .load_manifest()
+            .map_err(|e| (resources::ReadErrorKind::ManifestMissing, e))?;
+        let root = (*self.workspace_root).clone();
+
+        let (features, releases, hotfixes) = tokio::task::spawn_blocking(move || {
+            let features = smctl_flow::feature_list(&root, &manifest);
+            let releases = smctl_flow::release_list(&root, &manifest);
+            let hotfixes = smctl_flow::hotfix_list(&root, &manifest);
+            (features, releases, hotfixes)
+        })
+        .await
+        .map_err(|e| {
+            (
+                resources::ReadErrorKind::UpstreamFailed,
+                resources::read_failed(
+                    uri,
+                    format!(
+                        "Flow-branch enumeration task failed to join. {e}. \
+                         Retry the read, or run `smctl flow feature list` to reproduce."
+                    ),
+                ),
+            )
+        })?;
+
+        let features = features.map_err(|e| flow_upstream_error(uri, "feature", e))?;
+        let releases = releases.map_err(|e| flow_upstream_error(uri, "release", e))?;
+        let hotfixes = hotfixes.map_err(|e| flow_upstream_error(uri, "hotfix", e))?;
+
+        let payload = serde_json::json!({
+            "features": features,
+            "releases": releases,
+            "hotfixes": hotfixes,
+        });
+        resources::json_result(uri, &payload)
+            .map_err(|e| (resources::ReadErrorKind::SerializationFailed, e))
+    }
+}
+
+fn flow_upstream_error(
+    uri: &str,
+    branch_kind: &str,
+    err: anyhow::Error,
+) -> (resources::ReadErrorKind, ErrorData) {
+    (
+        resources::ReadErrorKind::UpstreamFailed,
+        resources::read_failed(
+            uri,
+            format!(
+                "Flow {branch_kind}-branch listing failed. {err}. \
+                 Check that every repo in the manifest is cloned, then retry."
+            ),
+        ),
+    )
 }
 
 #[tool_router]
@@ -1155,14 +1292,25 @@ impl SmctlServer {
 
 impl ServerHandler for SmctlServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("smctl", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Expose smctl workspace, flow, spec, and build operations to MCP clients. \
-                 v1 ships one tool, smctl_workspace_status; run `smctl serve --mcp --stdio` \
-                 from your workspace root."
-                    .to_string(),
-            )
+        // Advertise both tools and resources. Resources do not support
+        // `subscribe` or `listChanged` notifications yet — the MCP
+        // surface is pure polling. When the subscription path lands
+        // (see `tasks.md`) flip on `enable_resources_subscribe` and
+        // `enable_resources_list_changed` here.
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new("smctl", env!("CARGO_PKG_VERSION")))
+        .with_instructions(
+            "Expose smctl workspace, flow, spec, and build operations to MCP clients. \
+             Call tools under the smctl_* namespace for mutations; read resources under \
+             the smctl:// scheme for workspace state. Run `smctl serve --mcp --stdio` \
+             from your workspace root."
+                .to_string(),
+        )
     }
 
     // Manually override `call_tool` so every invocation emits the
@@ -1237,6 +1385,93 @@ impl ServerHandler for SmctlServer {
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.tool_router.get(name).cloned()
+    }
+
+    // -- Resources --------------------------------------------------
+    //
+    // rmcp 1.5 has no `#[resource_router]` macro analogous to the tool
+    // surface, so each dispatch is written out longhand. The static
+    // list and templates come from `crate::resources`; the read path
+    // emits SMCTL-0207 on success / SMCTL-0208 on failure, mirroring
+    // the SMCTL-0203 / SMCTL-0204 tool-call pair.
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(
+            resources::static_resources(),
+        ))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Ok(ListResourceTemplatesResult::with_all_items(
+            resources::resource_templates(),
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let uri = request.uri.clone();
+        let request_id = format!("{}", context.id);
+        let started = Instant::now();
+
+        let outcome = self.dispatch_read_resource(&uri).await;
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        match &outcome {
+            Ok(_) => {
+                tracing::info!(
+                    msgid = %MsgId::McpResourceRead,
+                    uri = %uri,
+                    request_id = %request_id,
+                    duration_ms = duration_ms,
+                    "resource read completed"
+                );
+            }
+            Err((kind, err)) => {
+                tracing::error!(
+                    msgid = %MsgId::McpResourceReadFailed,
+                    uri = %uri,
+                    request_id = %request_id,
+                    duration_ms = duration_ms,
+                    error_kind = kind.as_str(),
+                    remediation = %remediation_for(*kind, &uri),
+                    "resource read failed: {}",
+                    err.message
+                );
+            }
+        }
+
+        outcome.map_err(|(_kind, err)| err)
+    }
+}
+
+/// Map a [`resources::ReadErrorKind`] to the `remediation` field
+/// recorded on `SMCTL-0208`. Each value names an executable `smctl`
+/// subcommand per the `design-system-v1` error rubric.
+fn remediation_for(kind: resources::ReadErrorKind, _uri: &str) -> String {
+    match kind {
+        resources::ReadErrorKind::UnknownUri => {
+            "list `resources/list` or call the matching smctl subcommand".to_string()
+        }
+        resources::ReadErrorKind::ManifestMissing => {
+            "run `smctl workspace init` in the workspace root".to_string()
+        }
+        resources::ReadErrorKind::UpstreamFailed => {
+            "run the equivalent `smctl` subcommand to capture the underlying error".to_string()
+        }
+        resources::ReadErrorKind::SerializationFailed => {
+            "retry the read; the state may have been captured mid-transition".to_string()
+        }
     }
 }
 

@@ -9,13 +9,17 @@
 //! The v1 vertical slice ships:
 //!
 //! - stdio transport (via `rmcp::transport::stdio`)
-//! - one tool, `smctl_workspace_status`, backed by `smctl_workspace`
+//! - the full tool surface across workspace, worktree, flow, spec, and
+//!   build families (see `server.rs` for the catalog)
+//! - five read-only resources under the `smctl://` scheme, including a
+//!   templated `smctl://spec/{name}/tasks` URI
 //! - MSGID emission at the catalog sites declared in
 //!   `smctl-mcp-v1/specs/mcp-server-impl.md`
 //!
-//! SSE, streamable HTTP, additional tools, and MCP resources are
-//! deferred. See `tasks.md` for the follow-up list.
+//! SSE and streamable-HTTP transports are deferred. See `tasks.md` for
+//! the follow-up list.
 
+mod resources;
 mod server;
 
 pub use server::SmctlServer;
