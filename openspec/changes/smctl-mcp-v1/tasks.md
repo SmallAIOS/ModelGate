@@ -85,7 +85,7 @@
 
 - [x] Test MCP initialize handshake over stdio (`tests/stdio_handshake.rs::initialize_and_call_workspace_status`)
 - [x] Test tool invocation round-trip for a representative tool from every family (workspace, worktree, spec, build, flow)
-- [ ] Test resource listing and reading — deferred with resources
+- [x] Test resource listing and reading — `tests/stdio_handshake.rs` asserts `resources/list`, `resources/templates/list`, and `resources/read` round-trips for each of the four static URIs plus the templated `smctl://spec/{name}/tasks`, plus a `resource_not_found` negative case for an unknown URI
 - [ ] Test SSE transport connection and tool invocation — deferred with SSE
 - [ ] Test error handling (invalid tool params, workspace not found) — see "Error-path MSGID coverage" in Spec Drift
 
@@ -100,7 +100,7 @@
 
 - [x] `smctl serve --mcp --stdio` responds to MCP initialize handshake (covered by `tests/stdio_handshake.rs`)
 - [x] All workspace/flow/spec/build tools callable via MCP — 20 tools across 5 families now registered; listing + representative `tools/call` assertions in `tests/stdio_handshake.rs`
-- [ ] Resources return correct data for current workspace state — resources deferred
+- [x] Resources return correct data for current workspace state — covered by the resource round-trip assertions in `tests/stdio_handshake.rs` against an empty manifest and a scaffolded spec
 - [ ] SSE transport works for remote connections — deferred
 - [x] Starting the server emits `SMCTL-0200` to the configured log transports (covered by `tests/logging.rs`)
 - [x] A failing tool call emits `SMCTL-0204` with `tool`, `request_id`, and `error_kind` STRUCTURED-DATA fields — happy path verified via `tests/logging.rs` (SMCTL-0202 + SMCTL-0203); error-path emission wiring is in `server.rs` but not covered by a test yet
@@ -117,6 +117,6 @@ Findings from the first vertical-slice implementation pass. These were surfaced 
 - **`SMCTL-0205` and `SMCTL-0206` are unreachable on stdio.** The MSGIDs are declared in the catalog but the stdio transport has no unexpected-disconnect or transport-fatal surface distinct from a clean peer close. They will be wired when SSE / HTTP transports land.
 - **SSE transport, streamable HTTP transport.** Deferred. Add `rmcp` SSE feature, wire `--sse --port`, add a second integration test.
 - ~~**Remaining MCP tools.**~~ **Resolved.** 19 additional tools landed across workspace (init/add/remove/sync), worktree (add/list/remove), flow (init/feature/release/hotfix), spec (new/validate/archive/list), and build. Two minor API-drift resolutions: `workspace_sync` inlines a per-repo git-pull loop because `smctl_workspace::sync` does not exist; `smctl_spec_status` is deferred because `list_specs` already carries per-spec phase + task progress.
-- **MCP resources.** `smctl://workspace/config`, `smctl://workspace/status`, etc. Not started.
+- ~~**MCP resources.**~~ **Resolved.** Five resources now ship: `smctl://workspace/config` (TOML), `smctl://workspace/status`, `smctl://flow/branches`, `smctl://spec/list` (all JSON), plus the templated `smctl://spec/{name}/tasks`. `SMCTL-0207` / `SMCTL-0208` cover the read success / failure events. Subscription and list-changed notifications are still out — flip those on in `ServerCapabilities::builder()` when the polling strategy changes. Path-traversal is blocked at parse time (spec names containing `/` are rejected by `parse_spec_tasks_uri`).
 - **Error-path MSGID coverage.** Add a test that forces `smctl_workspace_status` to fail (e.g. point it at a workspace-less tempdir) and asserts `SMCTL-0204` with `tool`, `request_id`, `error_kind`, and a `remediation` field that names a real smctl subcommand.
 - **`rmcp` API divergence from the original spec draft.** The first draft of the implementation spec assumed `rmcp` constructs (e.g. `transport::channel()`, `serve_server` helpers) that the 0.8+ API does not expose by that name. Current implementation uses `rmcp::transport::stdio()` and `ServiceExt::serve` directly. Update `specs/mcp-server-impl.md` sample code in a follow-up editorial pass.
