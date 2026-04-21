@@ -151,10 +151,7 @@ mod tests {
             MsgId::DependencyUnused.default_severity(),
             Severity::Warning
         );
-        assert_eq!(
-            MsgId::UnsafeBlockFound.default_severity(),
-            Severity::Notice
-        );
+        assert_eq!(MsgId::UnsafeBlockFound.default_severity(), Severity::Notice);
     }
 
     #[test]
