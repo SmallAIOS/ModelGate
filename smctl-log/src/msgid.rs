@@ -15,6 +15,7 @@ use crate::severity::Severity;
 ///
 /// - `SMCTL-0001` .. `SMCTL-0099` — smctl core (workspace, spec, flow, build)
 /// - `SMCTL-0200` .. `SMCTL-0299` — smctl-mcp (see `smctl-mcp-v1/specs/mcp-server-impl.md`)
+/// - `SMCTL-0400` .. `SMCTL-0499` — smctl-quality (see `safety-quality-v1/specs/quality-toolchain.md`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MsgId {
     // smctl core (0001..0099)
@@ -38,6 +39,17 @@ pub enum MsgId {
     McpTransportFatal,
     McpResourceRead,
     McpResourceReadFailed,
+
+    // smctl-quality (0400..0499)
+    QualityCheckStarted,
+    QualityCheckCompleted,
+    QualityCheckFailed,
+    DsmCycleDetected,
+    ComplexityThresholdExceeded,
+    DependencyVulnerability,
+    DependencyUnused,
+    UnsafeBlockFound,
+    FerroceneIncompatibility,
 }
 
 impl MsgId {
@@ -61,6 +73,15 @@ impl MsgId {
             MsgId::McpTransportFatal => 206,
             MsgId::McpResourceRead => 207,
             MsgId::McpResourceReadFailed => 208,
+            MsgId::QualityCheckStarted => 400,
+            MsgId::QualityCheckCompleted => 401,
+            MsgId::QualityCheckFailed => 402,
+            MsgId::DsmCycleDetected => 410,
+            MsgId::ComplexityThresholdExceeded => 411,
+            MsgId::DependencyVulnerability => 420,
+            MsgId::DependencyUnused => 421,
+            MsgId::UnsafeBlockFound => 430,
+            MsgId::FerroceneIncompatibility => 440,
         }
     }
 
@@ -73,8 +94,15 @@ impl MsgId {
             | MsgId::Uncategorized
             | MsgId::McpToolFailed
             | MsgId::McpTransportFatal
-            | MsgId::McpResourceReadFailed => Severity::Error,
-            MsgId::McpClientDisconnected => Severity::Warning,
+            | MsgId::McpResourceReadFailed
+            | MsgId::QualityCheckFailed
+            | MsgId::DsmCycleDetected
+            | MsgId::DependencyVulnerability => Severity::Error,
+            MsgId::McpClientDisconnected
+            | MsgId::ComplexityThresholdExceeded
+            | MsgId::DependencyUnused
+            | MsgId::FerroceneIncompatibility => Severity::Warning,
+            MsgId::UnsafeBlockFound => Severity::Notice,
             _ => Severity::Informational,
         }
     }
@@ -108,6 +136,71 @@ mod tests {
         assert_eq!(MsgId::BuildCompleted.code(), 7);
         assert_eq!(MsgId::BuildFailed.code(), 8);
         assert_eq!(MsgId::Uncategorized.code(), 99);
+    }
+
+    #[test]
+    fn quality_codes_and_display_match_spec_catalog() {
+        assert_eq!(MsgId::QualityCheckStarted.code(), 400);
+        assert_eq!(MsgId::QualityCheckCompleted.code(), 401);
+        assert_eq!(MsgId::QualityCheckFailed.code(), 402);
+        assert_eq!(MsgId::DsmCycleDetected.code(), 410);
+        assert_eq!(MsgId::ComplexityThresholdExceeded.code(), 411);
+        assert_eq!(MsgId::DependencyVulnerability.code(), 420);
+        assert_eq!(MsgId::DependencyUnused.code(), 421);
+        assert_eq!(MsgId::UnsafeBlockFound.code(), 430);
+        assert_eq!(MsgId::FerroceneIncompatibility.code(), 440);
+        assert_eq!(MsgId::QualityCheckStarted.to_string(), "SMCTL-0400");
+        assert_eq!(MsgId::FerroceneIncompatibility.to_string(), "SMCTL-0440");
+    }
+
+    #[test]
+    fn quality_default_severity_matches_spec() {
+        assert_eq!(
+            MsgId::QualityCheckStarted.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(
+            MsgId::QualityCheckFailed.default_severity(),
+            Severity::Error
+        );
+        assert_eq!(MsgId::DsmCycleDetected.default_severity(), Severity::Error);
+        assert_eq!(
+            MsgId::DependencyVulnerability.default_severity(),
+            Severity::Error
+        );
+        assert_eq!(
+            MsgId::ComplexityThresholdExceeded.default_severity(),
+            Severity::Warning
+        );
+        assert_eq!(
+            MsgId::DependencyUnused.default_severity(),
+            Severity::Warning
+        );
+        assert_eq!(
+            MsgId::UnsafeBlockFound.default_severity(),
+            Severity::Notice
+        );
+    }
+
+    #[test]
+    fn quality_codes_sit_in_reserved_range() {
+        for id in [
+            MsgId::QualityCheckStarted,
+            MsgId::QualityCheckCompleted,
+            MsgId::QualityCheckFailed,
+            MsgId::DsmCycleDetected,
+            MsgId::ComplexityThresholdExceeded,
+            MsgId::DependencyVulnerability,
+            MsgId::DependencyUnused,
+            MsgId::UnsafeBlockFound,
+            MsgId::FerroceneIncompatibility,
+        ] {
+            let code = id.code();
+            assert!(
+                (400..=499).contains(&code),
+                "quality MSGID {id:?} code {code} outside reserved 400..=499"
+            );
+        }
     }
 
     #[test]

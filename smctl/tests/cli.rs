@@ -482,3 +482,120 @@ fn test_log_level_rejects_bad_value() {
         .failure()
         .stderr(predicate::str::contains("unknown log level"));
 }
+
+// ── Quality ──────────────────────────────────────────────────────────
+
+/// Probe whether cargo-audit is installed. Used to skip the audit
+/// integration test gracefully on machines / CI environments that do not
+/// have the tool yet.
+fn cargo_audit_present() -> bool {
+    std::process::Command::new("cargo")
+        .args(["audit", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn test_quality_audit_help_is_sentence_case() {
+    // Voice check: the help text is sentence case, imperative, no emoji.
+    smctl()
+        .args(["quality", "audit", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Audit dependencies for published RUSTSEC advisories",
+        ));
+}
+
+#[test]
+fn test_quality_audit_missing_tool_emits_three_part_error() {
+    // When cargo-audit is absent, the CLI must surface a three-part
+    // message (what happened / what it means / what to do next). Under
+    // assert_cmd, stdout is not a TTY so the CLI renders the error as
+    // JSON (per safety-quality-v1/design.md Decision 9); we assert the
+    // three-part text is present in that JSON payload.
+    if cargo_audit_present() {
+        eprintln!("skipping: cargo-audit is installed; this path is only reachable without it");
+        return;
+    }
+
+    let output = smctl()
+        .args(["quality", "audit"])
+        .output()
+        .expect("failed to run smctl quality audit");
+    assert!(!output.status.success(), "expected non-zero exit");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.contains("cargo-audit is not installed"),
+        "missing 'what happened' line. got: {combined}"
+    );
+    assert!(
+        combined.contains("cargo install cargo-audit"),
+        "missing remediation line. got: {combined}"
+    );
+}
+
+#[test]
+fn test_quality_audit_json_output_is_structurally_valid() {
+    // Detection-and-skip: if cargo-audit is not installed, the JSON path
+    // still returns valid JSON (an error object), and we verify that shape.
+    // If cargo-audit IS installed, we verify the audit-report JSON shape.
+    // Either way, stdout must parse as JSON.
+    let output = smctl()
+        .args(["quality", "audit", "--json"])
+        .output()
+        .expect("failed to run smctl quality audit --json");
+
+    // Strip any leading non-JSON lines (tracing may emit to stderr only,
+    // but guard anyway). stdout should be a single JSON document.
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout was:\n{stdout}"));
+
+    // The output is either an error object (tool missing) or a report
+    // object. Both are JSON objects at the top level.
+    assert!(
+        value.is_object(),
+        "expected top-level JSON object, got: {value}"
+    );
+
+    if cargo_audit_present() {
+        // Report shape — structural keys only; do not assert on advisory
+        // content because RUSTSEC drifts.
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("root"), "report missing 'root' key");
+        assert!(
+            obj.contains_key("advisories"),
+            "report missing 'advisories' key"
+        );
+        assert!(
+            obj.contains_key("advisory_count"),
+            "report missing 'advisory_count' key"
+        );
+        assert!(obj.contains_key("fail"), "report missing 'fail' key");
+        assert!(
+            obj.contains_key("duration_ms"),
+            "report missing 'duration_ms' key"
+        );
+        assert!(
+            obj["advisories"].is_array(),
+            "'advisories' must be an array"
+        );
+    } else {
+        // Tool-missing error object shape.
+        let obj = value.as_object().unwrap();
+        assert_eq!(
+            obj.get("error").and_then(|v| v.as_str()),
+            Some("tool_missing"),
+            "expected error=tool_missing when cargo-audit is absent"
+        );
+        assert!(obj.contains_key("remediation"), "missing 'remediation' key");
+    }
+}
