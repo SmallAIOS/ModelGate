@@ -7,6 +7,7 @@ members = [
     "smctl-build",
     "smctl-log",
     "smctl-mcp",
+    "smctl-quality",
 ]
 resolver = "3"
 
