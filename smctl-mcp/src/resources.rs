@@ -5,15 +5,17 @@
 //! (defined in [`crate::server`]) drive workspace mutations; resources
 //! let clients poll the resulting state without a tool round-trip.
 //!
-//! Workspace-scoped resources live here in the first commit:
+//! The five resources defined here match `smctl-mcp-v1/tasks.md`:
 //!
 //! - `smctl://workspace/config` — manifest TOML (application/toml)
 //! - `smctl://workspace/status` — live per-repo status (application/json)
 //! - `smctl://flow/branches` — active flow branches (application/json)
+//! - `smctl://spec/list` — every spec with phase + task progress (application/json)
+//! - `smctl://spec/{name}/tasks` — per-spec task progress, templated URI
 //!
-//! Spec-scoped resources (`smctl://spec/list`, the templated
-//! `smctl://spec/{name}/tasks`) land in a follow-up commit on the same
-//! branch.
+//! The static-URI resources are advertised through `resources/list`;
+//! `smctl://spec/{name}/tasks` is advertised through
+//! `resources/templates/list` because its URI is parameterized.
 //!
 //! Error payloads follow the `design-system-v1` three-part rubric (fact
 //! → meaning → executable `smctl` remediation) — clients relay these
@@ -23,7 +25,8 @@ use std::path::{Path, PathBuf};
 
 use rmcp::ErrorData;
 use rmcp::model::{
-    Annotated, RawResource, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    Annotated, RawResource, RawResourceTemplate, ReadResourceResult, Resource, ResourceContents,
+    ResourceTemplate,
 };
 
 /// MIME types declared in the resource metadata and attached to the
@@ -38,6 +41,10 @@ pub mod mime {
 pub const URI_WORKSPACE_CONFIG: &str = "smctl://workspace/config";
 pub const URI_WORKSPACE_STATUS: &str = "smctl://workspace/status";
 pub const URI_FLOW_BRANCHES: &str = "smctl://flow/branches";
+pub const URI_SPEC_LIST: &str = "smctl://spec/list";
+
+/// Templated URI advertised via `resources/templates/list`.
+pub const URI_TEMPLATE_SPEC_TASKS: &str = "smctl://spec/{name}/tasks";
 
 /// Static resources exposed by the server.
 ///
@@ -78,15 +85,36 @@ pub fn static_resources() -> Vec<Resource> {
                 .with_mime_type(mime::JSON),
             None,
         ),
+        Annotated::new(
+            RawResource::new(URI_SPEC_LIST, "spec list")
+                .with_title("OpenSpec changes")
+                .with_description(
+                    "Every OpenSpec change in the workspace with its phase and \
+                     task-completion counts. Archived specs are included.",
+                )
+                .with_mime_type(mime::JSON),
+            None,
+        ),
     ]
 }
 
 /// Templated resources exposed by the server.
 ///
-/// No templates are advertised in this commit; spec-tasks lands with
-/// the spec-scoped URIs in the follow-up.
+/// `spec/{name}/tasks` is parameterized by spec name and cannot be
+/// enumerated statically; advertise it as a template so clients know
+/// how to construct a readable URI.
 pub fn resource_templates() -> Vec<ResourceTemplate> {
-    Vec::new()
+    vec![Annotated::new(
+        RawResourceTemplate::new(URI_TEMPLATE_SPEC_TASKS, "spec tasks")
+            .with_title("Spec task progress")
+            .with_description(
+                "Task-completion counts and the raw tasks.md body for a single \
+                 OpenSpec change. Substitute {name} with the spec identifier \
+                 (matching the directory under openspec/changes/).",
+            )
+            .with_mime_type(mime::JSON),
+        None,
+    )]
 }
 
 /// Classifier for `resources/read` dispatch failures. Used to populate
@@ -96,6 +124,9 @@ pub fn resource_templates() -> Vec<ResourceTemplate> {
 pub enum ReadErrorKind {
     /// URI did not match any static or templated resource.
     UnknownUri,
+    /// URI matched the spec template but the spec name was empty or
+    /// contained a path separator.
+    InvalidUri,
     /// Workspace manifest was not found or failed to parse.
     ManifestMissing,
     /// Underlying smctl library call returned an error.
@@ -109,11 +140,25 @@ impl ReadErrorKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::UnknownUri => "unknown_uri",
+            Self::InvalidUri => "invalid_uri",
             Self::ManifestMissing => "manifest_missing",
             Self::UpstreamFailed => "upstream_failed",
             Self::SerializationFailed => "serialization_failed",
         }
     }
+}
+
+/// Parse a `smctl://spec/{name}/tasks` URI and return the spec name.
+/// Returns `None` if the URI does not match the template shape.
+/// Rejects empty names and names containing path separators so the
+/// upstream spec loader cannot be driven into filesystem traversal.
+pub fn parse_spec_tasks_uri(uri: &str) -> Option<&str> {
+    let rest = uri.strip_prefix("smctl://spec/")?;
+    let name = rest.strip_suffix("/tasks")?;
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some(name)
 }
 
 /// Wrap a JSON value into the `ReadResourceResult` envelope with the
@@ -186,6 +231,7 @@ mod tests {
             URI_WORKSPACE_CONFIG,
             URI_WORKSPACE_STATUS,
             URI_FLOW_BRANCHES,
+            URI_SPEC_LIST,
         ] {
             assert!(
                 uris.iter().any(|u| u == expected),
@@ -195,13 +241,41 @@ mod tests {
     }
 
     #[test]
-    fn templates_are_empty_in_this_commit() {
-        assert!(resource_templates().is_empty());
+    fn templates_advertise_spec_tasks() {
+        let templates = resource_templates();
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].raw.uri_template, URI_TEMPLATE_SPEC_TASKS);
+        assert_eq!(templates[0].raw.mime_type.as_deref(), Some(mime::JSON));
+    }
+
+    #[test]
+    fn parse_spec_tasks_uri_accepts_simple_name() {
+        assert_eq!(
+            parse_spec_tasks_uri("smctl://spec/smctl-mcp-v1/tasks"),
+            Some("smctl-mcp-v1")
+        );
+    }
+
+    #[test]
+    fn parse_spec_tasks_uri_rejects_nested_path() {
+        assert_eq!(
+            parse_spec_tasks_uri("smctl://spec/foo/bar/tasks"),
+            None,
+            "nested spec names must be rejected to avoid path traversal"
+        );
+    }
+
+    #[test]
+    fn parse_spec_tasks_uri_rejects_other_shapes() {
+        assert!(parse_spec_tasks_uri("smctl://spec/list").is_none());
+        assert!(parse_spec_tasks_uri("smctl://spec//tasks").is_none());
+        assert!(parse_spec_tasks_uri("smctl://workspace/status").is_none());
     }
 
     #[test]
     fn read_error_kind_as_str_is_stable_snake_case() {
         assert_eq!(ReadErrorKind::UnknownUri.as_str(), "unknown_uri");
+        assert_eq!(ReadErrorKind::InvalidUri.as_str(), "invalid_uri");
         assert_eq!(ReadErrorKind::ManifestMissing.as_str(), "manifest_missing");
         assert_eq!(ReadErrorKind::UpstreamFailed.as_str(), "upstream_failed");
     }

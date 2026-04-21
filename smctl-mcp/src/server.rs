@@ -242,16 +242,36 @@ impl SmctlServer {
             resources::URI_WORKSPACE_CONFIG => self.read_workspace_config(uri).await,
             resources::URI_WORKSPACE_STATUS => self.read_workspace_status(uri).await,
             resources::URI_FLOW_BRANCHES => self.read_flow_branches(uri).await,
-            other => Err((
-                resources::ReadErrorKind::UnknownUri,
-                ErrorData::resource_not_found(
-                    format!(
-                        "No resource registered for {other}. \
-                         Call `resources/list` to enumerate supported URIs."
-                    ),
-                    None,
-                ),
-            )),
+            resources::URI_SPEC_LIST => self.read_spec_list(uri).await,
+            other => {
+                if let Some(name) = resources::parse_spec_tasks_uri(other) {
+                    self.read_spec_tasks(other, name).await
+                } else if other.starts_with("smctl://spec/") && other.ends_with("/tasks") {
+                    // Matched the outer shape but the middle segment is
+                    // empty or contains slashes.
+                    Err((
+                        resources::ReadErrorKind::InvalidUri,
+                        ErrorData::invalid_params(
+                            format!(
+                                "Spec-tasks URI malformed. Got {other}. \
+                                 Reissue as smctl://spec/<name>/tasks with a non-empty name."
+                            ),
+                            None,
+                        ),
+                    ))
+                } else {
+                    Err((
+                        resources::ReadErrorKind::UnknownUri,
+                        ErrorData::resource_not_found(
+                            format!(
+                                "No resource registered for {other}. \
+                                 Call `resources/list` to enumerate supported URIs."
+                            ),
+                            None,
+                        ),
+                    ))
+                }
+            }
         }
     }
 
@@ -341,6 +361,123 @@ impl SmctlServer {
             "features": features,
             "releases": releases,
             "hotfixes": hotfixes,
+        });
+        resources::json_result(uri, &payload)
+            .map_err(|e| (resources::ReadErrorKind::SerializationFailed, e))
+    }
+
+    async fn read_spec_list(
+        &self,
+        uri: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        let manifest = self
+            .load_manifest()
+            .map_err(|e| (resources::ReadErrorKind::ManifestMissing, e))?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+
+        let specs = tokio::task::spawn_blocking(move || smctl_spec::list_specs(&openspec_dir))
+            .await
+            .map_err(|e| {
+                (
+                    resources::ReadErrorKind::UpstreamFailed,
+                    resources::read_failed(
+                        uri,
+                        format!(
+                            "Spec-list task failed to join. {e}. \
+                             Retry the read, or run `smctl spec list` to reproduce."
+                        ),
+                    ),
+                )
+            })?
+            .map_err(|e| {
+                (
+                    resources::ReadErrorKind::UpstreamFailed,
+                    resources::read_failed(
+                        uri,
+                        format!(
+                            "Spec list failed. {e}. \
+                             Check that the openspec directory exists and is readable."
+                        ),
+                    ),
+                )
+            })?;
+
+        let payload = serde_json::json!({ "specs": specs });
+        resources::json_result(uri, &payload)
+            .map_err(|e| (resources::ReadErrorKind::SerializationFailed, e))
+    }
+
+    async fn read_spec_tasks(
+        &self,
+        uri: &str,
+        name: &str,
+    ) -> Result<ReadResourceResult, (resources::ReadErrorKind, ErrorData)> {
+        let manifest = self
+            .load_manifest()
+            .map_err(|e| (resources::ReadErrorKind::ManifestMissing, e))?;
+        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+        let name_owned = name.to_string();
+
+        let info = {
+            let openspec_dir = openspec_dir.clone();
+            let task_name = name_owned.clone();
+            tokio::task::spawn_blocking(move || smctl_spec::spec_info(&openspec_dir, &task_name))
+                .await
+                .map_err(|e| {
+                    (
+                        resources::ReadErrorKind::UpstreamFailed,
+                        resources::read_failed(
+                            uri,
+                            format!(
+                                "Spec-info task failed to join. {e}. \
+                                 Retry the read, or run `smctl spec list` to reproduce."
+                            ),
+                        ),
+                    )
+                })?
+                .map_err(|e| {
+                    (
+                        resources::ReadErrorKind::UpstreamFailed,
+                        ErrorData::resource_not_found(
+                            format!(
+                                "Spec {name_owned} not found. {e}. \
+                                 Run `smctl spec list` to confirm the spec name."
+                            ),
+                            None,
+                        ),
+                    )
+                })?
+        };
+
+        let tasks_path = info.path.join("tasks.md");
+        let tasks_markdown = if tasks_path.exists() {
+            std::fs::read_to_string(&tasks_path).map_err(|e| {
+                (
+                    resources::ReadErrorKind::UpstreamFailed,
+                    resources::read_failed(
+                        uri,
+                        format!(
+                            "Reading {} failed. {e}. \
+                             Check filesystem permissions and retry.",
+                            tasks_path.display()
+                        ),
+                    ),
+                )
+            })?
+        } else {
+            String::new()
+        };
+
+        let payload = serde_json::json!({
+            "name": info.name,
+            "phase": info.phase,
+            "path": info.path,
+            "has_proposal": info.has_proposal,
+            "has_design": info.has_design,
+            "has_tasks": info.has_tasks,
+            "tasks_total": info.tasks_total,
+            "tasks_done": info.tasks_done,
+            "tasks_markdown": tasks_markdown,
         });
         resources::json_result(uri, &payload)
             .map_err(|e| (resources::ReadErrorKind::SerializationFailed, e))
@@ -1462,6 +1599,9 @@ fn remediation_for(kind: resources::ReadErrorKind, _uri: &str) -> String {
     match kind {
         resources::ReadErrorKind::UnknownUri => {
             "list `resources/list` or call the matching smctl subcommand".to_string()
+        }
+        resources::ReadErrorKind::InvalidUri => {
+            "reissue the read as smctl://spec/<name>/tasks with a concrete spec name".to_string()
         }
         resources::ReadErrorKind::ManifestMissing => {
             "run `smctl workspace init` in the workspace root".to_string()
