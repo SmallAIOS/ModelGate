@@ -362,6 +362,18 @@ enum QualityCommands {
         #[arg(long, default_value = "warning", value_parser = parse_audit_severity)]
         fail_on: smctl_quality::AdvisorySeverity,
     },
+
+    /// Scan for unused dependencies in workspace manifests
+    Deps {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the unused-dependency count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 1)]
+        fail_on_count: usize,
+    },
 }
 
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
@@ -1419,6 +1431,78 @@ async fn run(cli: Cli) -> Result<i32> {
                     if report.fail {
                         println!(
                             "remediation: run `cargo update -p <crate>` for each affected crate, or upgrade the direct dependency"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Deps {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_machete_available() {
+                    let msg = "cargo-machete is not installed on PATH. smctl quality deps cannot run without it. Install it with: cargo install cargo-machete";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-machete",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan for unused dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_deps(&root) {
+                    Ok(r) => smctl_quality::deps::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "deps_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.unused.is_empty() {
+                    println!("deps passed: no unused dependencies found");
+                } else {
+                    println!(
+                        "deps {}: {} unused dependency/dependencies found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.unused_count
+                    );
+                    for u in &report.unused {
+                        println!("  {} in {} ({})", u.dependency, u.manifest, u.crate_name);
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: remove each unused entry from the listed Cargo.toml, or add a `package.metadata.cargo-machete` ignore entry if the dependency is a false positive"
                         );
                     }
                 }
