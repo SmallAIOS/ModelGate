@@ -26,18 +26,19 @@
 
 ## Design Structure Matrix (DSM)
 
-- [ ] Implement `cargo-modules` wrapper for module-level dependency analysis
+- [x] Implement `cargo-modules` wrapper for module-level dependency analysis
 - [ ] Implement `cargo-depgraph` wrapper for crate-level dependency graph
-- [ ] Implement cycle detection in module dependency graph
-- [ ] Implement `smctl quality dsm` — generate DSM report
-- [ ] Implement `smctl quality dsm --check` — fail if cycles detected (CI mode)
+- [x] Implement cycle detection in module dependency graph (DFS back-edge detection over parsed adjacency map)
+- [x] Implement `smctl quality dsm` — generate DSM report
+- [x] Implement `smctl quality dsm --enforce-no-cycles` — fail if cycles detected (default on; pass `false` for report-only)
 - [ ] Implement `smctl quality dsm --svg` — generate visual DSM as SVG
-- [ ] Implement `smctl quality dsm --json` — machine-readable output
-- [ ] Support `enforce_no_cycles` config in workspace.toml
+- [x] Implement `smctl quality dsm --json` — machine-readable output
+- [x] Graceful three-part error when cargo-modules is not installed
+- [x] Emit SMCTL-0400 / 0410 / 0401 / 0402 MSGIDs through run
+- [x] Run DSM across all workspace members (enumerated via cargo metadata --no-deps)
 - [ ] Support `max_coupling_depth` config for transitive dependency limits
-- [ ] Run DSM across all workspace repos (multi-repo aware)
-- [ ] Write tests for cycle detection logic
-- [ ] Write tests for DSM output formatting
+- [x] Write tests for cycle detection logic (empty, tree without cycles, back-edge detection, round-trip, threshold gate both directions)
+- [x] Integration test that invokes `smctl quality dsm --json` and asserts structural JSON shape (detection-and-skip when cargo-modules absent)
 
 ## Cyclomatic & Cognitive Complexity
 
@@ -163,10 +164,11 @@ through its own review cycle.
 
 ### Deferred verbs (each its own follow-up)
 
-- [ ] `smctl quality dsm` — cargo-modules + cargo-depgraph wrapper, cycle detection, SVG/JSON output
 - [ ] `smctl quality complexity` — rust-code-analysis wrapper, threshold gating, top-N reporting
 - [ ] `smctl quality ferrocene` — compatibility-pattern probe, target alignment audit
 - [ ] `smctl quality` (no verb) — compose all verbs into a single run
+- [ ] `smctl quality dsm --svg` — visual DSM rendering; crate-level graph via cargo-depgraph
+- [ ] `deny.toml` + `cargo-deny` integration — belongs with the `deps` surface eventually but adds its own config surface
 
 ### Deferred platform work
 

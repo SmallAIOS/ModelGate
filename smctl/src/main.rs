@@ -365,6 +365,17 @@ enum QualityCommands {
         #[arg(long, default_value_t = 0)]
         fail_on_count: u64,
     },
+
+    /// Build a module dependency structure matrix and detect cycles
+    Dsm {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any module dependency cycle is detected
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        enforce_no_cycles: bool,
+    },
 }
 
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
@@ -1565,6 +1576,85 @@ async fn run(cli: Cli) -> Result<i32> {
                     if report.fail {
                         println!(
                             "remediation: review unsafe usage in each listed crate and either refactor to safe code or add a SAFETY: comment justifying each block"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Dsm {
+                json,
+                enforce_no_cycles,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_modules_available() {
+                    let msg = "cargo-modules is not installed on PATH. smctl quality dsm cannot run without it. Install it with: cargo install cargo-modules";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-modules",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would analyse module structure at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_dsm(&root) {
+                    Ok(r) => smctl_quality::dsm::finalise_report(r, enforce_no_cycles),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "dsm_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.cycles.is_empty() {
+                    println!(
+                        "dsm passed: no module dependency cycles across {} crate(s)",
+                        report.crates_scanned.len()
+                    );
+                } else {
+                    println!(
+                        "dsm {}: {} cycle(s) detected across {} crate(s)",
+                        if report.fail { "failed" } else { "completed" },
+                        report.cycle_count,
+                        report.crates_scanned.len()
+                    );
+                    for c in &report.cycles {
+                        println!(
+                            "  {}: {} <-> {} ({})",
+                            c.crate_name, c.module_a, c.module_b, c.via
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: break the reported cycle by extracting the shared abstraction into a parent module, or invert the dependency direction"
                         );
                     }
                 }
