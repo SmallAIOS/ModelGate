@@ -74,8 +74,8 @@
 - [x] `smctl://workspace/config` — Workspace configuration (TOML; error if no manifest)
 - [x] `smctl://workspace/status` — Live repo status (same shape as the `smctl_workspace_status` tool)
 - [x] `smctl://flow/branches` — Active flow branches (feature/release/hotfix, grouped)
-- [ ] `smctl://spec/list` — All specs with status
-- [ ] `smctl://spec/{name}/tasks` — Task progress for a spec
+- [x] `smctl://spec/list` — All specs with status (phase + task-completion counts, archived included)
+- [x] `smctl://spec/{name}/tasks` — Task progress for a spec (templated URI, advertised via `resources/templates/list`; rejects nested / empty names)
 - [x] Advertise the `ResourcesCapability` on `ServerHandler::get_info`
 - [x] Advertise MIME types in the resource metadata (`application/toml` for the config, `application/json` elsewhere)
 - [x] Override `list_resources` / `list_resource_templates` / `read_resource` on `SmctlServer`; emit `SMCTL-0207` on success and `SMCTL-0208` on failure
