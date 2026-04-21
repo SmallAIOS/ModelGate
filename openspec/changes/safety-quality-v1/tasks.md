@@ -73,14 +73,17 @@
 
 ## Unused Dependency Detection
 
-- [ ] Implement `cargo-machete` wrapper for fast unused dependency detection
+- [x] Implement `cargo-machete` wrapper for fast unused dependency detection
 - [ ] Implement `cargo-udeps` wrapper for thorough analysis (nightly CI only)
-- [ ] Implement `smctl quality deps` — report dependency health
-- [ ] Implement `smctl quality deps --check` — fail if unused deps found (CI mode)
-- [ ] Implement `smctl quality deps --json` — machine-readable output
+- [x] Implement `smctl quality deps` — report dependency health
+- [x] Implement `smctl quality deps --fail-on-count <n>` — fail when the unused-dependency count meets `<n>` (CI mode)
+- [x] Implement `smctl quality deps --json` — machine-readable output
+- [x] Graceful three-part error when cargo-machete is not installed
+- [x] Emit SMCTL-0400 / 0421 / 0401 / 0402 MSGIDs through run
 - [ ] Support per-crate exception list for false positives
 - [ ] Run dependency analysis across all workspace repos
-- [ ] Write tests for dependency report parsing
+- [x] Write tests for dependency report parsing (empty, single block, multiple blocks, round-trip, threshold gate both directions)
+- [x] Integration test that invokes `smctl quality deps --json` and asserts structural JSON shape (detection-and-skip when cargo-machete absent)
 
 ## Unsafe Code Tracking
 
@@ -158,7 +161,6 @@ through its own review cycle.
 
 - [ ] `smctl quality dsm` — cargo-modules + cargo-depgraph wrapper, cycle detection, SVG/JSON output
 - [ ] `smctl quality complexity` — rust-code-analysis wrapper, threshold gating, top-N reporting
-- [ ] `smctl quality deps` — cargo-machete wrapper, unused-dep detection, per-crate exceptions
 - [ ] `smctl quality unsafe` — cargo-geiger wrapper, justification-comment tracking
 - [ ] `smctl quality ferrocene` — compatibility-pattern probe, target alignment audit
 - [ ] `smctl quality` (no verb) — compose all verbs into a single run
