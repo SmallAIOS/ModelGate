@@ -965,6 +965,7 @@ dependencies = [
  "smctl-build",
  "smctl-flow",
  "smctl-log",
+ "smctl-quality",
  "smctl-spec",
  "smctl-workspace",
  "tempfile",

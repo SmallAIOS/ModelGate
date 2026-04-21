@@ -112,6 +112,12 @@ enum Commands {
         cedar: bool,
     },
 
+    /// Run engineering-quality checks across the workspace
+    Quality {
+        #[command(subcommand)]
+        command: QualityCommands,
+    },
+
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -324,6 +330,34 @@ enum SpecCommands {
 }
 
 #[derive(Subcommand, Debug)]
+enum QualityCommands {
+    /// Audit dependencies for published RUSTSEC advisories
+    Audit {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when an advisory meets or exceeds this severity
+        #[arg(long, default_value = "warning", value_parser = parse_audit_severity)]
+        fail_on: smctl_quality::AdvisorySeverity,
+    },
+}
+
+fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "none" => Ok(smctl_quality::AdvisorySeverity::None),
+        "low" => Ok(smctl_quality::AdvisorySeverity::Low),
+        "warning" => Ok(smctl_quality::AdvisorySeverity::Warning),
+        "medium" | "moderate" => Ok(smctl_quality::AdvisorySeverity::Medium),
+        "high" => Ok(smctl_quality::AdvisorySeverity::High),
+        "critical" => Ok(smctl_quality::AdvisorySeverity::Critical),
+        other => Err(format!(
+            "unknown severity '{other}'. valid values are: none, low, warning, medium, high, critical. pick one of those and pass it to --fail-on"
+        )),
+    }
+}
+
+#[derive(Subcommand, Debug)]
 enum ConfigCommands {
     /// Print effective configuration
     Show,
@@ -351,6 +385,15 @@ impl Cli {
             OutputFormat::Human
         }
     }
+}
+
+/// Return true when stdout is attached to a TTY.
+///
+/// Used by subcommands that default to JSON when their output will be piped
+/// into another process (per safety-quality-v1/design.md Decision 9).
+fn is_stdout_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }
 
 fn init_tracing(cli: &Cli) -> Result<()> {
@@ -1275,6 +1318,92 @@ async fn run(cli: Cli) -> Result<i32> {
                 Ok(exit_code::BUILD_ERROR)
             }
         }
+
+        Commands::Quality { command } => match command {
+            QualityCommands::Audit { json, fail_on } => {
+                // Honour --json on the verb and the global --json, and
+                // fall back to JSON when stdout is not a TTY (Decision 9
+                // in safety-quality-v1/design.md).
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_audit_available() {
+                    let msg = "cargo-audit is not installed on PATH. smctl quality audit cannot run without it. Install it with: cargo install cargo-audit";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-audit",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would audit dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_audit(&root) {
+                    Ok(r) => smctl_quality::finalise_report(r, fail_on),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "audit_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.advisories.is_empty() {
+                    println!("audit passed: no advisories found");
+                } else {
+                    println!(
+                        "audit {}: {} advisory/advisories found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.advisory_count
+                    );
+                    for a in &report.advisories {
+                        println!(
+                            "  {} {} ({:?}) installed {} — patched in {}",
+                            a.advisory_id,
+                            a.crate_name,
+                            a.severity,
+                            a.installed,
+                            if a.patched.is_empty() {
+                                "(no fix available)".to_string()
+                            } else {
+                                a.patched.join(", ")
+                            }
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: run `cargo update -p <crate>` for each affected crate, or upgrade the direct dependency"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+        },
 
         Commands::Config { command } => {
             let mut config = smctl::SmctlConfig::load_user_config()?;

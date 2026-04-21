@@ -2,12 +2,20 @@
 
 ## Crate Setup
 
-- [ ] Create `smctl-quality` crate with Cargo.toml
-- [ ] Add `smctl-quality` as workspace member in root Cargo.toml
-- [ ] Add `smctl-quality` dependency to `smctl` binary crate
-- [ ] Add `quality` subcommand to smctl CLI command tree
+- [x] Create `smctl-quality` crate with Cargo.toml
+- [x] Add `smctl-quality` as workspace member in root Cargo.toml
+- [x] Add `smctl-quality` dependency to `smctl` binary crate
+- [x] Add `quality` subcommand to smctl CLI command tree
 - [ ] Add `[quality]` section to workspace.toml schema and parser
-- [ ] Verify workspace builds with `cargo build --workspace`
+- [x] Verify workspace builds with `cargo build --workspace`
+
+## Logging Catalog (prerequisite for MSGID emission)
+
+- [x] Scaffold `smctl-log` crate with `MsgId` and `Severity` types
+- [x] Allocate SMCTL-0400..=SMCTL-0499 variants for smctl-quality
+- [x] Lock wire codes via `quality_msgid_codes_are_locked` test
+- [x] Assert reserved-range invariant via `quality_msgids_fall_in_reserved_range` test
+- [x] Assert per-variant default severity via `quality_default_severities_match_spec` test
 
 ## Tool Installation & Management
 
@@ -48,16 +56,20 @@
 
 ## Dependency Security Audit
 
-- [ ] Implement `cargo-audit` wrapper for RUSTSEC advisory checking
+- [x] Implement `cargo-audit` wrapper for RUSTSEC advisory checking
 - [ ] Implement `cargo-deny` wrapper for comprehensive dependency linting
 - [ ] Create default `deny.toml` configuration for SmallAIOS ecosystem
-- [ ] Implement `smctl quality audit` — run full security audit
-- [ ] Implement `smctl quality audit --json` — machine-readable output
+- [x] Implement `smctl quality audit` — run full security audit
+- [x] Implement `smctl quality audit --json` — machine-readable output
+- [x] Implement `--fail-on <severity>` threshold gating
+- [x] Emit SMCTL-0400 / 0420 / 0401 / 0402 MSGIDs through run
+- [x] Graceful three-part error when cargo-audit is not installed
 - [ ] Support `deny_advisories`, `deny_unmaintained`, `deny_yanked` config
 - [ ] Support license allowlist configuration
 - [ ] Support source registry restrictions
 - [ ] Run audit across all workspace repos
-- [ ] Write tests for audit result parsing
+- [x] Write tests for audit result parsing (empty, single-advisory, missing-severity, unknown-severity, round-trip, threshold gate both directions)
+- [x] Integration test that invokes `smctl quality audit --json` and asserts structural JSON shape (detection-and-skip when cargo-audit absent)
 
 ## Unused Dependency Detection
 
@@ -130,8 +142,53 @@
 - [ ] `smctl quality deps --check` detects intentionally unused dependency
 - [ ] `smctl quality unsafe --report` identifies all unsafe blocks
 - [ ] `smctl quality` runs all checks and produces unified output
-- [ ] `--json` output is valid JSON for all quality commands
+- [x] `--json` output is valid JSON for `smctl quality audit`
 - [ ] Quality gates work across multiple workspace repos
 - [ ] CI quality job passes on current codebase
-- [ ] `cargo test --workspace` passes with new crate
-- [ ] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` passes with new crates (74 tests)
+- [x] `cargo clippy --workspace -- -D warnings` passes
+
+## Spec Drift and Follow-ups
+
+This iteration landed a single vertical slice — the `audit` verb only. The
+full five-verb surface is deferred to follow-up changes so each can go
+through its own review cycle.
+
+### Deferred verbs (each its own follow-up)
+
+- [ ] `smctl quality dsm` — cargo-modules + cargo-depgraph wrapper, cycle detection, SVG/JSON output
+- [ ] `smctl quality complexity` — rust-code-analysis wrapper, threshold gating, top-N reporting
+- [ ] `smctl quality deps` — cargo-machete wrapper, unused-dep detection, per-crate exceptions
+- [ ] `smctl quality unsafe` — cargo-geiger wrapper, justification-comment tracking
+- [ ] `smctl quality ferrocene` — compatibility-pattern probe, target alignment audit
+- [ ] `smctl quality` (no verb) — compose all verbs into a single run
+
+### Deferred platform work
+
+- [ ] `smctl setup quality` — auto-install tool dependencies via `cargo install`
+- [ ] `smctl build --ferrocene` — toolchain selection flag
+- [ ] `smctl build --quality` — run quality suite as part of build
+- [ ] `smctl spec validate` — gate spec archive on quality checks
+- [ ] `--repos` filter on every verb for multi-repo scoping
+- [ ] `[quality]` section in workspace.toml schema and parser
+- [ ] Per-crate complexity overrides for legacy code
+- [ ] `.github/workflows/ci.yml` — quality job + tool caching + gate config
+- [ ] `deny.toml` — license + ban + source policy for `cargo-deny`
+- [ ] README.md quality section + badge
+- [ ] DSM interpretation guide, complexity-threshold rationale doc
+- [ ] MCP tool surface (`smctl_quality_audit` etc.) — owned by smctl-mcp-v1
+
+### Inherited prerequisite work also landed here
+
+The `smctl-log` crate and MSGID catalog were supposed to land in the
+`smctl-logging-v1` change, which has not been written yet. A minimal
+`smctl-log` crate (MsgId + Severity + tests) was scaffolded here as a
+pragmatic unblock. A follow-up change should:
+
+- [ ] Formalise `smctl-logging-v1` spec and retrofit this `smctl-log`
+      into whatever shape that spec declares
+- [ ] Add the RFC 5424 subscriber (the consumer side) — this slice ships
+      the producer side only
+- [ ] Add STRUCTURED-DATA wire-format verification tests
+- [ ] Allocate MSGID ranges for non-quality producers (workspace, flow,
+      spec, build, mcp) per their respective specs
