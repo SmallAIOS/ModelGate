@@ -25,6 +25,8 @@ Allocated from the `SMCTL-0200`–`SMCTL-0299` range reserved in `smctl-logging-
 | `SMCTL-0204` | `McpToolFailed` | Error | `tool`, `request_id`, `duration_ms`, `error_kind`, `remediation` | tool call returns an error payload |
 | `SMCTL-0205` | `McpClientDisconnected` | Warning | `transport`, `reason` | client transport closes unexpectedly |
 | `SMCTL-0206` | `McpTransportFatal` | Error | `transport`, `error` | transport itself crashes (e.g. SSE listener panics) |
+| `SMCTL-0207` | `McpResourceRead` | Informational | `uri`, `request_id`, `duration_ms` | `resources/read` returns a successful payload |
+| `SMCTL-0208` | `McpResourceReadFailed` | Error | `uri`, `request_id`, `duration_ms`, `error_kind`, `remediation` | `resources/read` fails — unknown URI, manifest missing, serialization failure |
 
 All STRUCTURED-DATA keys are snake_case ASCII. Numeric values render as decimal strings. `request_id` is the MCP request ID as a string, stable within a session.
 
