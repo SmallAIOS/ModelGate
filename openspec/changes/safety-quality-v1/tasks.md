@@ -87,16 +87,20 @@
 
 ## Unsafe Code Tracking
 
-- [ ] Implement `cargo-geiger` wrapper for unsafe code usage reporting
-- [ ] Implement `smctl quality unsafe` — report all unsafe blocks
-- [ ] Implement `smctl quality unsafe --report` — detailed report with locations
-- [ ] Implement `smctl quality unsafe --json` — machine-readable output
+- [x] Implement `cargo-geiger` wrapper for unsafe code usage reporting
+- [x] Implement `smctl quality unsafe` — report all unsafe blocks (per-crate counts)
+- [ ] Implement `smctl quality unsafe --report` — detailed per-site report with locations
+- [x] Implement `smctl quality unsafe --json` — machine-readable output
+- [x] Implement `--fail-on-count <n>` threshold gating (default 0 — report-only by default; set to 1 in smctl CI to enforce zero unsafe)
+- [x] Graceful three-part error when cargo-geiger is not installed
+- [x] Emit SMCTL-0400 / 0430 / 0401 / 0402 MSGIDs through run
 - [ ] Track unsafe justification comments (SAFETY: format)
 - [ ] Report unjustified unsafe blocks as warnings
 - [ ] Support `deny_new_unsafe` config to require justification
 - [ ] Differentiate smctl crates (target: zero unsafe) from kernel crates
 - [ ] Run unsafe analysis across all workspace repos
-- [ ] Write tests for unsafe report parsing
+- [x] Write tests for unsafe report parsing (empty, single-package, zero-unsafe filter, round-trip, threshold gate both directions)
+- [x] Integration test that invokes `smctl quality unsafe --json` and asserts structural JSON shape (detection-and-skip when cargo-geiger absent)
 
 ## Ferrocene Compiler Readiness
 
@@ -161,7 +165,6 @@ through its own review cycle.
 
 - [ ] `smctl quality dsm` — cargo-modules + cargo-depgraph wrapper, cycle detection, SVG/JSON output
 - [ ] `smctl quality complexity` — rust-code-analysis wrapper, threshold gating, top-N reporting
-- [ ] `smctl quality unsafe` — cargo-geiger wrapper, justification-comment tracking
 - [ ] `smctl quality ferrocene` — compatibility-pattern probe, target alignment audit
 - [ ] `smctl quality` (no verb) — compose all verbs into a single run
 

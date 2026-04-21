@@ -353,6 +353,18 @@ enum QualityCommands {
         #[arg(long, default_value_t = 1)]
         fail_on_count: usize,
     },
+
+    /// Report unsafe code usage across the workspace
+    Unsafe {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the total unsafe-site count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 0)]
+        fail_on_count: u64,
+    },
 }
 
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
@@ -1477,6 +1489,82 @@ async fn run(cli: Cli) -> Result<i32> {
                     if report.fail {
                         println!(
                             "remediation: remove each unused entry from the listed Cargo.toml, or add a `package.metadata.cargo-machete` ignore entry if the dependency is a false positive"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Unsafe {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_geiger_available() {
+                    let msg = "cargo-geiger is not installed on PATH. smctl quality unsafe cannot run without it. Install it with: cargo install cargo-geiger";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-geiger",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan unsafe code at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_unsafe(&root) {
+                    Ok(r) => smctl_quality::unsafe_scan::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "unsafe_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.crates.is_empty() {
+                    println!("unsafe passed: no unsafe code found");
+                } else {
+                    println!(
+                        "unsafe {}: {} crate(s) with unsafe code, {} site(s) total",
+                        if report.fail { "failed" } else { "completed" },
+                        report.crate_count,
+                        report.total_unsafe
+                    );
+                    for c in &report.crates {
+                        println!(
+                            "  {} {} — {} unsafe site(s)",
+                            c.crate_name, c.version, c.unsafe_count
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: review unsafe usage in each listed crate and either refactor to safe code or add a SAFETY: comment justifying each block"
                         );
                     }
                 }

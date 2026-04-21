@@ -640,3 +640,109 @@ fn test_quality_deps_json_output_is_structurally_valid() {
         assert!(obj.contains_key("remediation"), "missing 'remediation' key");
     }
 }
+
+/// Probe whether cargo-geiger is installed. Used to skip the unsafe
+/// integration test gracefully on machines / CI environments that do not
+/// have the tool yet.
+fn cargo_geiger_present() -> bool {
+    std::process::Command::new("cargo")
+        .args(["geiger", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn test_quality_unsafe_help_is_sentence_case() {
+    // Voice check: the help text is sentence case, imperative, no emoji.
+    smctl()
+        .args(["quality", "unsafe", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Report unsafe code usage across the workspace",
+        ));
+}
+
+#[test]
+fn test_quality_unsafe_missing_tool_emits_three_part_error() {
+    // When cargo-geiger is absent, the CLI must surface a three-part
+    // message (what happened / what it means / what to do next). Under
+    // assert_cmd, stdout is not a TTY so the CLI renders the error as
+    // JSON (per safety-quality-v1/design.md Decision 9); we assert the
+    // three-part text is present in that JSON payload.
+    if cargo_geiger_present() {
+        eprintln!("skipping: cargo-geiger is installed; this path is only reachable without it");
+        return;
+    }
+
+    let output = smctl()
+        .args(["quality", "unsafe"])
+        .output()
+        .expect("failed to run smctl quality unsafe");
+    assert!(!output.status.success(), "expected non-zero exit");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.contains("cargo-geiger is not installed"),
+        "missing 'what happened' line. got: {combined}"
+    );
+    assert!(
+        combined.contains("cargo install cargo-geiger"),
+        "missing remediation line. got: {combined}"
+    );
+}
+
+#[test]
+fn test_quality_unsafe_json_output_is_structurally_valid() {
+    // Detection-and-skip: if cargo-geiger is not installed, the JSON path
+    // still returns valid JSON (an error object), and we verify that shape.
+    // If cargo-geiger IS installed, we verify the unsafe-report JSON shape.
+    // Either way, stdout must parse as JSON.
+    let output = smctl()
+        .args(["quality", "unsafe", "--json"])
+        .output()
+        .expect("failed to run smctl quality unsafe --json");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout was:\n{stdout}"));
+
+    assert!(
+        value.is_object(),
+        "expected top-level JSON object, got: {value}"
+    );
+
+    if cargo_geiger_present() {
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("root"), "report missing 'root' key");
+        assert!(obj.contains_key("crates"), "report missing 'crates' key");
+        assert!(
+            obj.contains_key("crate_count"),
+            "report missing 'crate_count' key"
+        );
+        assert!(
+            obj.contains_key("total_unsafe"),
+            "report missing 'total_unsafe' key"
+        );
+        assert!(obj.contains_key("fail"), "report missing 'fail' key");
+        assert!(
+            obj.contains_key("duration_ms"),
+            "report missing 'duration_ms' key"
+        );
+        assert!(obj["crates"].is_array(), "'crates' must be an array");
+    } else {
+        let obj = value.as_object().unwrap();
+        assert_eq!(
+            obj.get("error").and_then(|v| v.as_str()),
+            Some("tool_missing"),
+            "expected error=tool_missing when cargo-geiger is absent"
+        );
+        assert!(obj.contains_key("remediation"), "missing 'remediation' key");
+    }
+}
