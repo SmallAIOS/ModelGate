@@ -12,6 +12,7 @@
 
 - [x] `smctl serve --mcp` calls `smctl_log::init` before starting the transport; do NOT install a separate `tracing-subscriber` inside `smctl-mcp`
 - [x] Extend `smctl_log::MsgId` with the seven `Mcp*` variants allocated in `design.md` Decision 5 (`SMCTL-0200` through `SMCTL-0206`), with matching entries in the spec's MSGID catalog
+- [x] Extend `smctl_log::MsgId` with the two resource-scoped variants `McpResourceRead` (`SMCTL-0207`) and `McpResourceReadFailed` (`SMCTL-0208`), with matching entries in the spec's MSGID catalog
 - [x] Update `smctl-log/src/msgid.rs` tests to cover the new variants
 - [x] Emit `SMCTL-0200` on server initialize, `SMCTL-0201` on graceful shutdown, `SMCTL-0202` on tool-call receipt, `SMCTL-0203` on success / `SMCTL-0204` on error
 - [ ] Emit `SMCTL-0205` (unexpected client disconnect) and `SMCTL-0206` (transport fatal). Not reachable on the stdio-only slice — stdio close is the clean-shutdown signal. Moved to Spec Drift / Follow-ups.

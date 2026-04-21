@@ -36,6 +36,8 @@ pub enum MsgId {
     McpToolFailed,
     McpClientDisconnected,
     McpTransportFatal,
+    McpResourceRead,
+    McpResourceReadFailed,
 }
 
 impl MsgId {
@@ -57,6 +59,8 @@ impl MsgId {
             MsgId::McpToolFailed => 204,
             MsgId::McpClientDisconnected => 205,
             MsgId::McpTransportFatal => 206,
+            MsgId::McpResourceRead => 207,
+            MsgId::McpResourceReadFailed => 208,
         }
     }
 
@@ -68,7 +72,8 @@ impl MsgId {
             MsgId::BuildFailed
             | MsgId::Uncategorized
             | MsgId::McpToolFailed
-            | MsgId::McpTransportFatal => Severity::Error,
+            | MsgId::McpTransportFatal
+            | MsgId::McpResourceReadFailed => Severity::Error,
             MsgId::McpClientDisconnected => Severity::Warning,
             _ => Severity::Informational,
         }
@@ -124,8 +129,12 @@ mod tests {
         assert_eq!(MsgId::McpToolFailed.code(), 204);
         assert_eq!(MsgId::McpClientDisconnected.code(), 205);
         assert_eq!(MsgId::McpTransportFatal.code(), 206);
+        assert_eq!(MsgId::McpResourceRead.code(), 207);
+        assert_eq!(MsgId::McpResourceReadFailed.code(), 208);
         assert_eq!(MsgId::McpServerStarted.to_string(), "SMCTL-0200");
         assert_eq!(MsgId::McpTransportFatal.to_string(), "SMCTL-0206");
+        assert_eq!(MsgId::McpResourceRead.to_string(), "SMCTL-0207");
+        assert_eq!(MsgId::McpResourceReadFailed.to_string(), "SMCTL-0208");
     }
 
     #[test]
@@ -144,6 +153,14 @@ mod tests {
             MsgId::McpClientDisconnected.default_severity(),
             Severity::Warning
         );
+        assert_eq!(
+            MsgId::McpResourceRead.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(
+            MsgId::McpResourceReadFailed.default_severity(),
+            Severity::Error
+        );
     }
 
     #[test]
@@ -156,6 +173,8 @@ mod tests {
             MsgId::McpToolFailed,
             MsgId::McpClientDisconnected,
             MsgId::McpTransportFatal,
+            MsgId::McpResourceRead,
+            MsgId::McpResourceReadFailed,
         ] {
             let code = id.code();
             assert!(
