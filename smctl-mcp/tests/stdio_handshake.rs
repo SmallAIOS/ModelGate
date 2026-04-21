@@ -2,12 +2,15 @@
 //!
 //! Exercises the initialize handshake plus the tool-surface contract:
 //! every tool in `EXPECTED_TOOLS` must be listed, and representative
-//! tools from each family must respond to `tools/call`.
+//! tools from each family must respond to `tools/call`. Also covers
+//! the resource surface: `resources/list`, `resources/templates/list`,
+//! and `resources/read` for every static URI plus the templated
+//! spec-tasks URI.
 
 use std::path::PathBuf;
 
 use rmcp::ServiceExt;
-use rmcp::model::{CallToolRequestParams, ClientInfo};
+use rmcp::model::{CallToolRequestParams, ClientInfo, ReadResourceRequestParams, ResourceContents};
 
 /// Every tool smctl-mcp advertises. Extend this list as new tools land.
 const EXPECTED_TOOLS: &[&str] = &[
@@ -186,10 +189,173 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
         "expected operation=flow init in {flow_text}"
     );
 
+    // Resources capability should be advertised on initialize.
+    assert!(
+        peer_info.capabilities.resources.is_some(),
+        "initialize response must advertise resources capability"
+    );
+
+    // `resources/list` must include every static URI.
+    let resources = client.list_resources(Default::default()).await?;
+    let resource_uris: Vec<String> = resources
+        .resources
+        .iter()
+        .map(|r| r.raw.uri.clone())
+        .collect();
+    for expected in [
+        "smctl://workspace/config",
+        "smctl://workspace/status",
+        "smctl://flow/branches",
+        "smctl://spec/list",
+    ] {
+        assert!(
+            resource_uris.iter().any(|u| u == expected),
+            "resource list must include {expected}, got {resource_uris:?}"
+        );
+    }
+
+    // Every static resource should declare a MIME type.
+    for resource in &resources.resources {
+        assert!(
+            resource.raw.mime_type.is_some(),
+            "resource {} missing mime_type advertisement",
+            resource.raw.uri
+        );
+    }
+
+    // `resources/templates/list` must include the spec-tasks template.
+    let templates = client.list_resource_templates(Default::default()).await?;
+    let template_uris: Vec<String> = templates
+        .resource_templates
+        .iter()
+        .map(|t| t.raw.uri_template.clone())
+        .collect();
+    assert!(
+        template_uris
+            .iter()
+            .any(|u| u == "smctl://spec/{name}/tasks"),
+        "template list must include smctl://spec/{{name}}/tasks, got {template_uris:?}"
+    );
+
+    // `resources/read` round-trip: workspace config returns TOML.
+    let config = client
+        .read_resource(ReadResourceRequestParams::new("smctl://workspace/config"))
+        .await?;
+    let config_contents = config.contents.first().expect("config read has contents");
+    let (config_text, config_mime) = match config_contents {
+        ResourceContents::TextResourceContents {
+            text, mime_type, ..
+        } => (text.as_str(), mime_type.as_deref()),
+        _ => panic!("expected text contents for workspace config, got {config_contents:?}"),
+    };
+    assert_eq!(config_mime, Some("application/toml"));
+    assert!(
+        config_text.contains("mcp-test-workspace"),
+        "workspace config should include the workspace name, got: {config_text}"
+    );
+
+    // `resources/read` round-trip: workspace status returns JSON with `repos`.
+    let status = client
+        .read_resource(ReadResourceRequestParams::new("smctl://workspace/status"))
+        .await?;
+    let status_text = text_of(&status.contents);
+    let status_json: serde_json::Value = serde_json::from_str(status_text)?;
+    assert!(
+        status_json.get("repos").is_some(),
+        "expected repos field in workspace status, got: {status_text}"
+    );
+    assert_mime(&status.contents, "application/json");
+
+    // `resources/read` round-trip: flow branches returns grouped JSON.
+    let flow_branches = client
+        .read_resource(ReadResourceRequestParams::new("smctl://flow/branches"))
+        .await?;
+    let flow_text = text_of(&flow_branches.contents);
+    let flow_json: serde_json::Value = serde_json::from_str(flow_text)?;
+    for key in ["features", "releases", "hotfixes"] {
+        assert!(
+            flow_json.get(key).is_some(),
+            "expected {key} field in flow branches, got: {flow_text}"
+        );
+    }
+    assert_mime(&flow_branches.contents, "application/json");
+
+    // `resources/read` round-trip: spec list returns empty array for
+    // a workspace with no openspec directory.
+    let spec_list = client
+        .read_resource(ReadResourceRequestParams::new("smctl://spec/list"))
+        .await?;
+    let specs_text = text_of(&spec_list.contents);
+    let specs_json: serde_json::Value = serde_json::from_str(specs_text)?;
+    assert!(
+        specs_json.get("specs").is_some(),
+        "expected specs field in spec list, got: {specs_text}"
+    );
+
+    // Scaffold one spec so the templated URI has real data to serve.
+    let openspec_dir = root.join("openspec");
+    smctl_spec::new_spec(&openspec_dir, "tasks-roundtrip-spec")?;
+
+    let spec_tasks = client
+        .read_resource(ReadResourceRequestParams::new(
+            "smctl://spec/tasks-roundtrip-spec/tasks",
+        ))
+        .await?;
+    let tasks_text = text_of(&spec_tasks.contents);
+    let tasks_json: serde_json::Value = serde_json::from_str(tasks_text)?;
+    assert_eq!(
+        tasks_json.get("name").and_then(|v| v.as_str()),
+        Some("tasks-roundtrip-spec")
+    );
+    assert!(
+        tasks_json.get("tasks_total").is_some(),
+        "expected tasks_total in spec tasks, got: {tasks_text}"
+    );
+    assert_mime(&spec_tasks.contents, "application/json");
+
+    // Unknown URIs should return a resource-not-found error.
+    let err = client
+        .read_resource(ReadResourceRequestParams::new("smctl://no/such/uri"))
+        .await
+        .expect_err("unknown URI must error");
+    let err_msg = format!("{err:?}");
+    assert!(
+        err_msg.to_lowercase().contains("no resource registered")
+            || err_msg.to_lowercase().contains("not found"),
+        "expected resource-not-found error, got: {err_msg}"
+    );
+
     // Tear down cleanly.
     client.cancel().await?;
     server_handle.await??;
     Ok(())
+}
+
+/// Pull the single text payload out of a `resources/read` response.
+fn text_of(contents: &[ResourceContents]) -> &str {
+    match contents
+        .first()
+        .expect("read response has at least one content")
+    {
+        ResourceContents::TextResourceContents { text, .. } => text.as_str(),
+        other => panic!("expected text contents, got {other:?}"),
+    }
+}
+
+/// Assert the single content block carries the expected MIME type.
+fn assert_mime(contents: &[ResourceContents], expected: &str) {
+    let mime = match contents
+        .first()
+        .expect("read response has at least one content")
+    {
+        ResourceContents::TextResourceContents { mime_type, .. } => mime_type.as_deref(),
+        ResourceContents::BlobResourceContents { mime_type, .. } => mime_type.as_deref(),
+    };
+    assert_eq!(
+        mime,
+        Some(expected),
+        "expected mime {expected}, got {mime:?}"
+    );
 }
 
 /// Minimal client handler — no server-initiated requests expected.
