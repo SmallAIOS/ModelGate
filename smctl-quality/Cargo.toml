@@ -1,0 +1,19 @@
+[package]
+name = "smctl-quality"
+description = "Engineering-quality toolchain surface for smctl (audit, dsm, complexity, deps, unsafe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+smctl-log = { path = "../smctl-log" }
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

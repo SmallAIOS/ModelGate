@@ -1018,6 +1018,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "smctl-quality"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "smctl-log",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "smctl-spec"
 version = "0.1.0"
 dependencies = [
