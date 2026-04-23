@@ -11,6 +11,7 @@ rmcp = { version = "1.5", features = [
     "server",
     "macros",
     "transport-io",
+    "transport-streamable-http-server",
     "schemars",
 ] }
 schemars = "1"
@@ -20,6 +21,8 @@ tokio.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio-util = "0.7"
 
 smctl-log = { path = "../smctl-log" }
 smctl-workspace = { path = "../smctl-workspace" }
@@ -36,7 +39,13 @@ rmcp = { version = "1.5", features = [
     "macros",
     "transport-io",
     "transport-async-rw",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client",
+    "transport-streamable-http-client-reqwest",
+    "reqwest",
     "schemars",
 ] }
 anyhow.workspace = true
 tokio = { workspace = true }
+assert_cmd.workspace = true
+predicates.workspace = true

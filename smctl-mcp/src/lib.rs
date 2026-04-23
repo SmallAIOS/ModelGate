@@ -9,32 +9,42 @@
 //! The v1 vertical slice ships:
 //!
 //! - stdio transport (via `rmcp::transport::stdio`)
+//! - SSE / streamable-HTTP transport (via
+//!   `rmcp::transport::streamable_http_server::StreamableHttpService`
+//!   wrapped in an axum router) — see [`serve_sse`]
 //! - the full tool surface across workspace, worktree, flow, spec, and
 //!   build families (see `server.rs` for the catalog)
 //! - five read-only resources under the `smctl://` scheme, including a
 //!   templated `smctl://spec/{name}/tasks` URI
 //! - MSGID emission at the catalog sites declared in
 //!   `smctl-mcp-v1/specs/mcp-server-impl.md`
-//!
-//! SSE and streamable-HTTP transports are deferred. See `tasks.md` for
-//! the follow-up list.
 
 mod resources;
 mod server;
 
-pub use server::SmctlServer;
+pub use server::{SmctlServer, serve_sse, serve_stdio};
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 /// Which transport to bind for `smctl serve --mcp`.
 ///
-/// v1 only wires [`Transport::Stdio`]; other variants exist to keep the
-/// CLI flag surface stable as new transports come online (see
-/// `smctl-mcp-v1/tasks.md` — "Spec drift and follow-ups").
+/// [`Transport::Stdio`] stays the default — that is what Claude Code,
+/// Cursor, and Windsurf drive. [`Transport::Sse`] exposes the same tool
+/// and resource surface over HTTP using rmcp's streamable-HTTP server
+/// (SSE response framing plus JSON POSTs on a single endpoint).
 #[derive(Debug, Clone, Copy)]
 pub enum Transport {
     /// stdin / stdout — the default for Claude Code, Cursor, Windsurf.
     Stdio,
+    /// SSE over HTTP. Binds a TCP listener at `addr` and serves the MCP
+    /// streamable-HTTP endpoint at `/mcp`.
+    Sse {
+        /// Socket address to bind. Prefer loopback-only for local use;
+        /// the server enforces loopback `Host` validation by default
+        /// (see rmcp's DNS-rebinding guard).
+        addr: SocketAddr,
+    },
 }
 
 /// Start the MCP server on the given transport and block until the
@@ -47,5 +57,6 @@ pub enum Transport {
 pub async fn start_server(workspace_root: PathBuf, transport: Transport) -> anyhow::Result<()> {
     match transport {
         Transport::Stdio => server::serve_stdio(workspace_root).await,
+        Transport::Sse { addr } => server::serve_sse(workspace_root, addr).await,
     }
 }
