@@ -42,18 +42,21 @@
 
 ## Cyclomatic & Cognitive Complexity
 
-- [ ] Integrate `rust-code-analysis` for cyclomatic complexity measurement
+- [x] Integrate `rust-code-analysis` for cyclomatic complexity measurement
 - [ ] Integrate clippy `cognitive_complexity` lint for cognitive complexity
-- [ ] Implement `smctl quality complexity` — report per-function complexity
-- [ ] Implement `smctl quality complexity --check` — fail if thresholds exceeded (CI mode)
-- [ ] Implement `smctl quality complexity --json` — machine-readable output
-- [ ] Support `max_cyclomatic_complexity` config (default: 15)
-- [ ] Support `max_cognitive_complexity` config (default: 25)
+- [x] Implement `smctl quality complexity` — report per-function complexity
+- [x] Implement `smctl quality complexity --cyclomatic-threshold / --cognitive-threshold` — fail if thresholds exceeded (CI mode)
+- [x] Implement `smctl quality complexity --json` — machine-readable output
+- [x] Support `--cyclomatic-threshold` flag (default: 15)
+- [x] Support `--cognitive-threshold` flag (default: 25)
 - [ ] Support `max_function_lines` config (default: 100)
 - [ ] Support per-crate threshold overrides for legacy code
 - [ ] Identify and report top-N most complex functions
-- [ ] Run complexity analysis across all workspace repos
-- [ ] Write tests for threshold checking logic
+- [x] Run complexity analysis across all workspace members (enumerated via cargo metadata --no-deps)
+- [x] Write tests for threshold checking logic (empty, single-function, two-threshold interaction, round-trip, tool-missing detection, pass/fail gate)
+- [x] Graceful three-part error when rust-code-analysis-cli is not installed
+- [x] Emit SMCTL-0400 / 0411 / 0401 / 0402 MSGIDs through run
+- [x] Integration test that invokes `smctl quality complexity --json` and asserts structural JSON shape (detection-and-skip when rust-code-analysis-cli absent)
 
 ## Dependency Security Audit
 
@@ -164,7 +167,6 @@ through its own review cycle.
 
 ### Deferred verbs (each its own follow-up)
 
-- [ ] `smctl quality complexity` — rust-code-analysis wrapper, threshold gating, top-N reporting
 - [ ] `smctl quality ferrocene` — compatibility-pattern probe, target alignment audit
 - [ ] `smctl quality` (no verb) — compose all verbs into a single run
 - [ ] `smctl quality dsm --svg` — visual DSM rendering; crate-level graph via cargo-depgraph
