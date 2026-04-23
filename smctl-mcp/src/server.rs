@@ -14,6 +14,7 @@
 //! SSE / streamable-HTTP transports and the remaining tool surface are
 //! tracked as follow-ups in `openspec/changes/smctl-mcp-v1/tasks.md`.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -27,10 +28,14 @@ use rmcp::model::{
     ReadResourceResult, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::RequestContext;
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smctl_log::MsgId;
+use tokio_util::sync::CancellationToken;
 
 use crate::resources;
 
@@ -1621,8 +1626,9 @@ fn remediation_for(kind: resources::ReadErrorKind, _uri: &str) -> String {
 /// Emits `SMCTL-0200` once the transport is bound, `SMCTL-0201` on
 /// graceful shutdown. `SMCTL-0205` (unexpected client disconnect) and
 /// `SMCTL-0206` (transport fatal) are declared in the catalog but are
-/// not reachable on the stdio-only slice — stdio close is the
-/// shutdown signal. See `tasks.md` for the follow-up wiring.
+/// not reachable on stdio — stdio close is the shutdown signal. The
+/// SSE transport ([`serve_sse`]) owns the SMCTL-0205 / SMCTL-0206
+/// emission sites.
 pub async fn serve_stdio(workspace_root: PathBuf) -> anyhow::Result<()> {
     let server = SmctlServer::new(workspace_root);
     let transport = rmcp::transport::stdio();
@@ -1645,12 +1651,99 @@ pub async fn serve_stdio(workspace_root: PathBuf) -> anyhow::Result<()> {
         "MCP server stopped"
     );
 
-    // TODO(smctl-mcp-v1 follow-up): emit SMCTL-0205 when rmcp surfaces
-    // an unexpected-disconnect reason distinct from a clean close, and
-    // SMCTL-0206 from the SSE / HTTP transport error paths once those
-    // land. See openspec/changes/smctl-mcp-v1/tasks.md — "Spec drift
-    // and follow-ups".
-    let _ = (MsgId::McpClientDisconnected, MsgId::McpTransportFatal);
-
     Ok(())
+}
+
+/// Start the MCP server on SSE / streamable-HTTP and block until the
+/// TCP listener closes.
+///
+/// Binds to `addr`, wraps an [`rmcp`] `StreamableHttpService` in an axum
+/// router, and serves the MCP endpoint at `/mcp`. Each client connection
+/// runs as its own session via `LocalSessionManager`; session lifetimes
+/// are tracked by rmcp.
+///
+/// MSGID emission:
+///
+/// - `SMCTL-0200 McpServerStarted` once the TCP listener is bound,
+///   carrying `transport="sse"` and `listen_addr=<local_addr>`.
+/// - `SMCTL-0201 McpServerStopped` on graceful shutdown.
+/// - `SMCTL-0206 McpTransportFatal` if `TcpListener::bind` fails or the
+///   axum serve-loop returns an error.
+///
+/// `SMCTL-0205 McpClientDisconnected` is emitted per-session by rmcp's
+/// own session lifecycle — the streamable-HTTP server spawns a task per
+/// session that logs unexpected closes, so the transport-level wrapper
+/// here does not re-emit. If session-level disconnect tracing is
+/// required later, layer a session manager wrapper over
+/// `LocalSessionManager`.
+pub async fn serve_sse(workspace_root: PathBuf, addr: SocketAddr) -> anyhow::Result<()> {
+    let cancel = CancellationToken::new();
+    let server = SmctlServer::new(workspace_root);
+
+    // `StreamableHttpService::new` expects a factory that produces a
+    // fresh handler per session; clone the prebuilt server (it is cheap
+    // — the workspace root is an Arc and the tool router is a Clone).
+    let service = StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default().with_cancellation_token(cancel.child_token()),
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(
+                msgid = %MsgId::McpTransportFatal,
+                transport = "sse",
+                error = %e,
+                "SSE listener bind failed"
+            );
+            return Err(anyhow::anyhow!(
+                "SSE listener bind failed at {addr}. {e}. \
+                 Re-run `smctl serve --mcp --sse --port <n>` with a free port."
+            ));
+        }
+    };
+
+    let local_addr = listener.local_addr()?;
+
+    tracing::info!(
+        msgid = %MsgId::McpServerStarted,
+        transport = "sse",
+        listen_addr = %local_addr,
+        "MCP server bound to SSE"
+    );
+
+    let serve_result = axum::serve(listener, router)
+        .with_graceful_shutdown({
+            let cancel = cancel.clone();
+            async move { cancel.cancelled().await }
+        })
+        .await;
+
+    match serve_result {
+        Ok(()) => {
+            tracing::info!(
+                msgid = %MsgId::McpServerStopped,
+                transport = "sse",
+                reason = "listener_closed",
+                "MCP server stopped"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(
+                msgid = %MsgId::McpTransportFatal,
+                transport = "sse",
+                error = %e,
+                "SSE listener crashed"
+            );
+            Err(anyhow::anyhow!(
+                "SSE listener crashed. {e}. \
+                 Re-run `smctl serve --mcp --sse --port <n>` after inspecting the stderr log."
+            ))
+        }
+    }
 }

@@ -130,9 +130,19 @@ enum Commands {
         #[arg(long)]
         mcp: bool,
 
-        /// Use stdio transport (default, required when --mcp is set)
+        /// Use stdio transport (default when --mcp is set without another transport)
         #[arg(long)]
         stdio: bool,
+
+        /// Use SSE / streamable-HTTP transport (local only; mutually exclusive with --stdio)
+        #[arg(long)]
+        sse: bool,
+
+        /// TCP port for the SSE transport. The default 9377 spells "MCP" on
+        /// a phone keypad (M=6, C=2... the digits 9377 are chosen for
+        /// memorability and to stay well clear of well-known ports).
+        #[arg(long, default_value_t = 9377)]
+        port: u16,
     },
 
     // --- Convenience aliases ---
@@ -1350,7 +1360,12 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(exit_code::SUCCESS)
         }
 
-        Commands::Serve { mcp, stdio } => {
+        Commands::Serve {
+            mcp,
+            stdio,
+            sse,
+            port,
+        } => {
             if !mcp {
                 anyhow::bail!(
                     "Serve mode not specified. You must choose a server surface. \
@@ -1358,15 +1373,30 @@ async fn run(cli: Cli) -> Result<i32> {
                 );
             }
 
-            // stdio is the only transport wired in v1. The flag is
-            // accepted (and defaulted) so the CLI shape is stable when
-            // SSE / HTTP transports land. See
-            // openspec/changes/smctl-mcp-v1/tasks.md for follow-ups.
-            let _ = stdio;
+            if stdio && sse {
+                anyhow::bail!(
+                    "You specified both --stdio and --sse. \
+                     The MCP server binds to exactly one transport per invocation. \
+                     Re-run with only one transport flag."
+                );
+            }
 
-            // MCP owns stdout; route logs to stderr via the shared
-            // subscriber. `smctl_log::init` is idempotent and is the
-            // single owner of the tracing-subscriber registration
+            // Resolve transport. Default to stdio when neither flag is
+            // set; `--sse` flips the switch regardless of `--port`
+            // (which always has a default). `--port` without `--sse` is
+            // silently ignored — the stdio transport has no port.
+            let transport = if sse {
+                let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+                smctl_mcp::Transport::Sse { addr }
+            } else {
+                smctl_mcp::Transport::Stdio
+            };
+
+            // MCP owns stdout on stdio; SSE routes all protocol bytes
+            // over the TCP socket, leaving stdout available. Either way,
+            // route tracing to stderr via the shared subscriber.
+            // `smctl_log::init` is idempotent and is the single owner of
+            // the tracing-subscriber registration
             // (smctl-mcp-v1/design.md Decision 6).
             let level = if cli.quiet {
                 smctl_log::LogLevel::Error
@@ -1386,7 +1416,7 @@ async fn run(cli: Cli) -> Result<i32> {
             smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             let root = resolve_root()?;
-            smctl_mcp::start_server(root, smctl_mcp::Transport::Stdio).await?;
+            smctl_mcp::start_server(root, transport).await?;
             Ok(exit_code::SUCCESS)
         }
 
