@@ -856,3 +856,126 @@ fn test_quality_dsm_json_output_is_structurally_valid() {
         assert!(obj.contains_key("remediation"), "missing 'remediation' key");
     }
 }
+
+/// Probe whether rust-code-analysis-cli is installed. Used to skip the
+/// complexity integration test gracefully on machines / CI environments
+/// that do not have the tool yet.
+fn rust_code_analysis_present() -> bool {
+    std::process::Command::new("rust-code-analysis-cli")
+        .arg("--help")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn test_quality_complexity_help_voice() {
+    // Voice check: the help text is sentence case, imperative, no emoji.
+    smctl()
+        .args(["quality", "complexity", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Measure cyclomatic and cognitive complexity per function",
+        ));
+}
+
+#[test]
+fn test_quality_complexity_missing_tool_three_part_error() {
+    // When rust-code-analysis-cli is absent, the CLI must surface a
+    // three-part message (what happened / what it means / what to do
+    // next). Under assert_cmd, stdout is not a TTY so the CLI renders
+    // the error as JSON (per safety-quality-v1/design.md Decision 9);
+    // we assert the three-part text is present in that JSON payload.
+    if rust_code_analysis_present() {
+        eprintln!(
+            "skipping: rust-code-analysis-cli is installed; this path is only reachable without it"
+        );
+        return;
+    }
+
+    let output = smctl()
+        .args(["quality", "complexity"])
+        .output()
+        .expect("failed to run smctl quality complexity");
+    assert!(!output.status.success(), "expected non-zero exit");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        combined.contains("rust-code-analysis-cli is not installed"),
+        "missing 'what happened' line. got: {combined}"
+    );
+    assert!(
+        combined.contains("cargo install rust-code-analysis-cli"),
+        "missing remediation line. got: {combined}"
+    );
+}
+
+#[test]
+fn test_quality_complexity_json_shape() {
+    // Detection-and-skip: if rust-code-analysis-cli is not installed,
+    // the JSON path still returns valid JSON (an error object), and we
+    // verify that shape. If the tool IS installed, we verify the
+    // complexity-report JSON shape. Either way, stdout must parse as
+    // JSON.
+    let output = smctl()
+        .args(["quality", "complexity", "--json"])
+        .output()
+        .expect("failed to run smctl quality complexity --json");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout was:\n{stdout}"));
+
+    assert!(
+        value.is_object(),
+        "expected top-level JSON object, got: {value}"
+    );
+
+    if rust_code_analysis_present() {
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("root"), "report missing 'root' key");
+        assert!(
+            obj.contains_key("violations"),
+            "report missing 'violations' key"
+        );
+        assert!(
+            obj.contains_key("violation_count"),
+            "report missing 'violation_count' key"
+        );
+        assert!(
+            obj.contains_key("function_count"),
+            "report missing 'function_count' key"
+        );
+        assert!(
+            obj.contains_key("threshold_cyclomatic"),
+            "report missing 'threshold_cyclomatic' key"
+        );
+        assert!(
+            obj.contains_key("threshold_cognitive"),
+            "report missing 'threshold_cognitive' key"
+        );
+        assert!(obj.contains_key("fail"), "report missing 'fail' key");
+        assert!(
+            obj.contains_key("duration_ms"),
+            "report missing 'duration_ms' key"
+        );
+        assert!(
+            obj["violations"].is_array(),
+            "'violations' must be an array"
+        );
+    } else {
+        let obj = value.as_object().unwrap();
+        assert_eq!(
+            obj.get("error").and_then(|v| v.as_str()),
+            Some("tool_missing"),
+            "expected error=tool_missing when rust-code-analysis-cli is absent"
+        );
+        assert!(obj.contains_key("remediation"), "missing 'remediation' key");
+    }
+}

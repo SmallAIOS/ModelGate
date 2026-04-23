@@ -376,6 +376,25 @@ enum QualityCommands {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         enforce_no_cycles: bool,
     },
+
+    /// Measure cyclomatic and cognitive complexity per function
+    Complexity {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any function exceeds this cyclomatic complexity
+        #[arg(long, default_value_t = 15)]
+        cyclomatic_threshold: u32,
+
+        /// Fail the command when any function exceeds this cognitive complexity
+        #[arg(long, default_value_t = 25)]
+        cognitive_threshold: u32,
+
+        /// Scope the scan to this subdirectory instead of the workspace root
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
 
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
@@ -1655,6 +1674,96 @@ async fn run(cli: Cli) -> Result<i32> {
                     if report.fail {
                         println!(
                             "remediation: break the reported cycle by extracting the shared abstraction into a parent module, or invert the dependency direction"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Complexity {
+                json,
+                cyclomatic_threshold,
+                cognitive_threshold,
+                path,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = path.clone().unwrap_or_else(|| {
+                    resolve_root().unwrap_or_else(|_| {
+                        std::env::current_dir().expect("failed to get current directory")
+                    })
+                });
+
+                if !smctl_quality::cargo_rust_code_analysis_available() {
+                    let msg = "rust-code-analysis-cli is not installed on PATH. smctl quality complexity cannot run without it. Install it with: cargo install rust-code-analysis-cli";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install rust-code-analysis-cli",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would measure complexity at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_complexity(&root) {
+                    Ok(r) => smctl_quality::complexity::finalise_report(
+                        r,
+                        cyclomatic_threshold,
+                        cognitive_threshold,
+                    ),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "complexity_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.violations.is_empty() {
+                    println!(
+                        "complexity passed: {} function(s) within thresholds (cyclomatic <= {}, cognitive <= {})",
+                        report.function_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                } else {
+                    println!(
+                        "complexity {}: {} function(s) exceed thresholds (cyclomatic > {}, cognitive > {})",
+                        if report.fail { "failed" } else { "completed" },
+                        report.violation_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                    for v in &report.violations {
+                        println!(
+                            "  {} in {}:{}-{} — cyclomatic {}, cognitive {}",
+                            v.function, v.file, v.start_line, v.end_line, v.cyclomatic, v.cognitive,
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: refactor each flagged function into smaller helpers, or add a justification comment with the rationale"
                         );
                     }
                 }
