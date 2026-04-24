@@ -18,6 +18,7 @@ smctl-build = { path = "../smctl-build" }
 smctl-log = { path = "../smctl-log" }
 smctl-mcp = { path = "../smctl-mcp" }
 smctl-quality = { path = "../smctl-quality" }
+smctl-gate = { path = "../smctl-gate" }
 
 clap.workspace = true
 clap_complete.workspace = true
@@ -29,6 +30,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+futures-util = "0.3"
 
 [dev-dependencies]
 assert_cmd.workspace = true

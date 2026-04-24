@@ -8,6 +8,7 @@ members = [
     "smctl-log",
     "smctl-mcp",
     "smctl-quality",
+    "smctl-gate",
 ]
 resolver = "3"
 

@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -116,6 +117,20 @@ enum Commands {
     Quality {
         #[command(subcommand)]
         command: QualityCommands,
+    },
+
+    /// Talk to a running ModelGate instance (status, models, routes, test, logs)
+    Gate {
+        /// ModelGate endpoint URL (overrides MODELGATE_URL env and workspace.toml)
+        #[arg(long, env = "MODELGATE_URL", global = true)]
+        url: Option<String>,
+
+        /// Request timeout in seconds
+        #[arg(long, default_value_t = smctl_gate::DEFAULT_TIMEOUT_SECS, global = true)]
+        timeout: u64,
+
+        #[command(subcommand)]
+        command: GateCommands,
     },
 
     /// Configuration management
@@ -418,6 +433,105 @@ enum QualityCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum GateCommands {
+    /// Show the health and summary metadata of the ModelGate instance
+    Status {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage registered models (list, add, remove)
+    Models {
+        #[command(subcommand)]
+        command: GateModelsCommands,
+    },
+
+    /// Inspect or configure the inference routing table
+    Routes {
+        #[command(subcommand)]
+        command: GateRoutesCommands,
+    },
+
+    /// Run a test inference against a registered model
+    Test {
+        /// Model name
+        model: String,
+
+        /// Path to a JSON file containing the inference input
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Emit the raw InferenceResult JSON on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Stream logs from the ModelGate instance (exit with Ctrl+C)
+    Logs {
+        /// Keep the connection open and stream indefinitely. Accepted for
+        /// parity with tail-like tools; currently the default behaviour.
+        #[arg(long)]
+        follow: bool,
+
+        /// Emit each log entry as newline-delimited JSON on stdout (jsonl)
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateRoutesCommands {
+    /// List all configured routes
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Set (or update) the route for a model
+    Set {
+        /// Model name
+        model: String,
+        /// Endpoint path (e.g. /v1/chat/completions)
+        endpoint: String,
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateModelsCommands {
+    /// List all registered models
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Register a new model from a local file
+    Add {
+        /// Path to the model file (.onnx, .gguf, ...)
+        path: PathBuf,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Unregister a model by name
+    Remove {
+        /// Model name
+        name: String,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
     match raw.to_ascii_lowercase().as_str() {
         "none" => Ok(smctl_quality::AdvisorySeverity::None),
@@ -469,6 +583,57 @@ impl Cli {
 fn is_stdout_tty() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i + 1 < UNITS.len() {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} {}", UNITS[0])
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
+}
+
+/// Render a `GateError` to stdout (JSON) or stderr (human + remediation)
+/// and return the conventional general-error exit code.
+fn gate_error_exit(err: smctl_gate::GateError, error_kind: &str, global_json: bool) -> Result<i32> {
+    let want_json = global_json || !is_stdout_tty();
+    let msg = format!("{err}");
+    if want_json {
+        let payload = serde_json::json!({
+            "error": error_kind,
+            "message": msg,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        eprintln!("error: {msg}");
+        let hint = match err {
+            smctl_gate::GateError::ConnectionRefused { .. } => {
+                "start ModelGate and retry, or point smctl at a reachable instance with --url or MODELGATE_URL"
+            }
+            smctl_gate::GateError::Timeout { .. } => {
+                "raise --timeout, or check that ModelGate is responsive"
+            }
+            smctl_gate::GateError::ModelNotFound { .. } => {
+                "run `smctl gate models list` to see registered models"
+            }
+            smctl_gate::GateError::FileNotFound { .. } => {
+                "check the path is correct and the file is readable, then re-run"
+            }
+            smctl_gate::GateError::HttpError { .. } => {
+                "inspect the ModelGate logs for the failing request"
+            }
+            _ => "re-run with -v for more detail",
+        };
+        eprintln!("remediation: {hint}");
+    }
+    Ok(exit_code::GENERAL_ERROR)
 }
 
 fn init_tracing(cli: &Cli) -> Result<()> {
@@ -558,6 +723,23 @@ fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSe
     };
     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
     manifest.logging
+}
+
+/// Best-effort load of the `[gate]` section from `workspace.toml`.
+/// Silently returns `None` when there is no workspace, the manifest
+/// is unreadable, or the section is absent. Failures here MUST NOT
+/// block `smctl gate` — the client falls back to `DEFAULT_URL`.
+fn load_manifest_gate(
+    workspace_override: Option<&Path>,
+) -> Option<smctl_workspace::GateManifestSection> {
+    let root = if let Some(path) = workspace_override {
+        path.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        smctl::find_workspace_root(&cwd)?
+    };
+    let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
+    manifest.gate
 }
 
 #[tokio::main]
@@ -1849,6 +2031,395 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::SUCCESS)
                     } else {
                         Ok(exit_code::GENERAL_ERROR)
+                    }
+                }
+            }
+        }
+
+        Commands::Gate {
+            url,
+            timeout,
+            command,
+        } => {
+            // Precedence: --url / MODELGATE_URL (fused by clap's `env`) >
+            // workspace.toml [gate].url > DEFAULT_URL. --timeout is a
+            // clap arg with a default value, so it always has a concrete
+            // number; we only consult [gate].timeout_secs when the user
+            // left the default untouched.
+            let manifest_gate = load_manifest_gate(cli.workspace.as_deref());
+            let resolved_url = url
+                .or_else(|| manifest_gate.as_ref().and_then(|g| g.url.clone()))
+                .unwrap_or_else(|| smctl_gate::DEFAULT_URL.to_string());
+            let resolved_timeout = if timeout == smctl_gate::DEFAULT_TIMEOUT_SECS {
+                manifest_gate
+                    .as_ref()
+                    .and_then(|g| g.timeout_secs)
+                    .unwrap_or(timeout)
+            } else {
+                timeout
+            };
+            let cfg = smctl_gate::GateConfig {
+                url: resolved_url,
+                timeout_secs: resolved_timeout,
+            };
+
+            let client = match smctl_gate::GateClient::new(cfg.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    let want_json = cli.json || !is_stdout_tty();
+                    let msg = format!("{e}");
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "invalid_config",
+                            "message": msg,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                        eprintln!(
+                            "remediation: pass --url http://<host>:<port> or set MODELGATE_URL to a valid URL"
+                        );
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+            };
+
+            match command {
+                GateCommands::Status { json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if dry_run {
+                        println!("would query {} for /health", client.base_url());
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.health().await {
+                        Ok(h) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&h)?);
+                            } else {
+                                println!("ModelGate status:");
+                                println!("  URL:     {}", client.base_url());
+                                println!("  Status:  {}", h.status);
+                                println!("  Version: {}", h.version);
+                                println!("  Uptime:  {}s", h.uptime_secs);
+                                println!("  Models:  {}", h.model_count);
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => gate_error_exit(e, "gate_unreachable", cli.json),
+                    }
+                }
+
+                GateCommands::Models { command } => match command {
+                    GateModelsCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/models", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_models().await {
+                            Ok(models) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&models)?);
+                                } else if models.is_empty() {
+                                    println!("no models registered");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<8} {:<12} {:<10} REGISTERED",
+                                        "NAME", "FORMAT", "SIZE", "STATUS"
+                                    );
+                                    for m in &models {
+                                        println!(
+                                            "{:<22} {:<8} {:<12} {:<10} {}",
+                                            m.name,
+                                            m.format,
+                                            human_bytes(m.size_bytes),
+                                            m.status,
+                                            m.registered_at
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_list_failed", cli.json),
+                        }
+                    }
+
+                    GateModelsCommands::Add { path, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if !path.exists() {
+                            let msg = format!("file not found: {}", path.display());
+                            if want_json {
+                                let err = serde_json::json!({
+                                    "error": "file_not_found",
+                                    "message": msg,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&err)?);
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: check the path is correct and the file is readable, then re-run"
+                                );
+                            }
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+
+                        if dry_run {
+                            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+                            println!(
+                                "would upload {} ({}) and register as '{}'",
+                                path.display(),
+                                human_bytes(size),
+                                name
+                            );
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        // Progress is printed to stderr so --json stdout stays
+                        // a pure machine-readable channel.
+                        let progress: Option<smctl_gate::ProgressCallback> = if want_json {
+                            None
+                        } else {
+                            use std::sync::Mutex;
+                            let last: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+                            let last_for_cb = last.clone();
+                            Some(Arc::new(move |sent: u64, total: Option<u64>| {
+                                let mut last_guard = last_for_cb.lock().unwrap();
+                                // Throttle updates to once per ~1% so large uploads
+                                // don't spam the terminal.
+                                let step = total.map(|t| (t / 100).max(1)).unwrap_or(256 * 1024);
+                                if sent - *last_guard >= step || Some(sent) == total {
+                                    *last_guard = sent;
+                                    match total {
+                                        Some(t) => eprint!(
+                                            "\ruploading: {} / {} ({:.0}%)",
+                                            human_bytes(sent),
+                                            human_bytes(t),
+                                            (sent as f64 / t as f64) * 100.0
+                                        ),
+                                        None => eprint!("\ruploading: {}", human_bytes(sent)),
+                                    }
+                                    use std::io::Write;
+                                    let _ = std::io::stderr().flush();
+                                }
+                            }))
+                        };
+
+                        match client.add_model(&path, progress).await {
+                            Ok(model) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&model)?);
+                                } else {
+                                    println!(
+                                        "model '{}' registered ({}, status={})",
+                                        model.name,
+                                        human_bytes(model.size_bytes),
+                                        model.status
+                                    );
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                gate_error_exit(e, "models_add_failed", cli.json)
+                            }
+                        }
+                    }
+
+                    GateModelsCommands::Remove { name, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would unregister model '{name}'");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.remove_model(&name).await {
+                            Ok(()) => {
+                                if want_json {
+                                    let ok = serde_json::json!({
+                                        "removed": name,
+                                    });
+                                    println!("{}", serde_json::to_string_pretty(&ok)?);
+                                } else {
+                                    println!("model '{name}' removed");
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_remove_failed", cli.json),
+                        }
+                    }
+                },
+
+                GateCommands::Routes { command } => match command {
+                    GateRoutesCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/routes", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_routes().await {
+                            Ok(routes) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&routes)?);
+                                } else if routes.is_empty() {
+                                    println!("no routes configured");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<28} {:<8} REQUESTS",
+                                        "MODEL", "ENDPOINT", "ACTIVE"
+                                    );
+                                    for r in &routes {
+                                        println!(
+                                            "{:<22} {:<28} {:<8} {}",
+                                            r.model,
+                                            r.endpoint,
+                                            if r.active { "yes" } else { "no" },
+                                            r.request_count
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_list_failed", cli.json),
+                        }
+                    }
+
+                    GateRoutesCommands::Set {
+                        model,
+                        endpoint,
+                        json,
+                    } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would route model '{model}' -> {endpoint}");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.set_route(&model, &endpoint).await {
+                            Ok(route) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&route)?);
+                                } else {
+                                    println!("route set: {} -> {}", route.model, route.endpoint);
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_set_failed", cli.json),
+                        }
+                    }
+                },
+
+                GateCommands::Logs { follow: _, json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if dry_run {
+                        println!("would open SSE stream {} /api/v1/logs", client.base_url());
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    let stream = match client.stream_logs().await {
+                        Ok(s) => s,
+                        Err(e) => return gate_error_exit(e, "logs_stream_failed", cli.json),
+                    };
+
+                    use futures_util::StreamExt;
+                    let mut stream = stream;
+                    let ctrl_c = tokio::signal::ctrl_c();
+                    tokio::pin!(ctrl_c);
+
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = &mut ctrl_c => {
+                                if !want_json {
+                                    eprintln!("\nlog stream closed");
+                                }
+                                return Ok(exit_code::SUCCESS);
+                            }
+                            next = stream.next() => {
+                                match next {
+                                    Some(Ok(entry)) => {
+                                        if want_json {
+                                            println!("{}", serde_json::to_string(&entry)?);
+                                        } else {
+                                            println!(
+                                                "{} {:<5} {}",
+                                                entry.timestamp, entry.level, entry.message
+                                            );
+                                        }
+                                    }
+                                    Some(Err(e)) => {
+                                        return gate_error_exit(e, "logs_stream_failed", cli.json);
+                                    }
+                                    None => {
+                                        // Server closed the stream.
+                                        return Ok(exit_code::SUCCESS);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                GateCommands::Test { model, input, json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if !input.exists() {
+                        let msg = format!("input file not found: {}", input.display());
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "file_not_found",
+                                "message": msg,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {msg}");
+                            eprintln!(
+                                "remediation: check the path is correct and the file is readable, then re-run"
+                            );
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+
+                    if dry_run {
+                        println!(
+                            "would POST {} -> /api/v1/inference/{}",
+                            input.display(),
+                            model
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.test_inference(&model, &input).await {
+                        Ok(result) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&result)?);
+                            } else {
+                                println!("inference result:");
+                                println!("  model:    {}", result.model);
+                                println!("  latency:  {}ms", result.latency_ms);
+                                if let Some(t) = result.tokens_generated {
+                                    println!("  tokens:   {t}");
+                                }
+                                println!("  output:   {}", serde_json::to_string(&result.output)?);
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => gate_error_exit(e, "inference_failed", cli.json),
                     }
                 }
             }

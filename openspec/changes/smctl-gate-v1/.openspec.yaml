@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-03-08
+status: ff
+parent: smctl-tool-v1
+description: "ModelGate control plane CLI — smctl gate subcommands for managing ModelGate instances, models, routes, and inference testing"
