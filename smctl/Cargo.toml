@@ -17,6 +17,7 @@ smctl-spec = { path = "../smctl-spec" }
 smctl-build = { path = "../smctl-build" }
 smctl-log = { path = "../smctl-log" }
 smctl-mcp = { path = "../smctl-mcp" }
+smctl-quality = { path = "../smctl-quality" }
 
 clap.workspace = true
 clap_complete.workspace = true

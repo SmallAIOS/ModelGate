@@ -112,6 +112,12 @@ enum Commands {
         cedar: bool,
     },
 
+    /// Run engineering-quality checks across the workspace
+    Quality {
+        #[command(subcommand)]
+        command: QualityCommands,
+    },
+
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -345,6 +351,88 @@ enum SpecCommands {
 }
 
 #[derive(Subcommand, Debug)]
+enum QualityCommands {
+    /// Audit dependencies for published RUSTSEC advisories
+    Audit {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when an advisory meets or exceeds this severity
+        #[arg(long, default_value = "warning", value_parser = parse_audit_severity)]
+        fail_on: smctl_quality::AdvisorySeverity,
+    },
+
+    /// Scan for unused dependencies in workspace manifests
+    Deps {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the unused-dependency count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 1)]
+        fail_on_count: usize,
+    },
+
+    /// Report unsafe code usage across the workspace
+    Unsafe {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the total unsafe-site count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 0)]
+        fail_on_count: u64,
+    },
+
+    /// Build a module dependency structure matrix and detect cycles
+    Dsm {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any module dependency cycle is detected
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        enforce_no_cycles: bool,
+    },
+
+    /// Measure cyclomatic and cognitive complexity per function
+    Complexity {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any function exceeds this cyclomatic complexity
+        #[arg(long, default_value_t = 15)]
+        cyclomatic_threshold: u32,
+
+        /// Fail the command when any function exceeds this cognitive complexity
+        #[arg(long, default_value_t = 25)]
+        cognitive_threshold: u32,
+
+        /// Scope the scan to this subdirectory instead of the workspace root
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+}
+
+fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "none" => Ok(smctl_quality::AdvisorySeverity::None),
+        "low" => Ok(smctl_quality::AdvisorySeverity::Low),
+        "warning" => Ok(smctl_quality::AdvisorySeverity::Warning),
+        "medium" | "moderate" => Ok(smctl_quality::AdvisorySeverity::Medium),
+        "high" => Ok(smctl_quality::AdvisorySeverity::High),
+        "critical" => Ok(smctl_quality::AdvisorySeverity::Critical),
+        other => Err(format!(
+            "unknown severity '{other}'. valid values are: none, low, warning, medium, high, critical. pick one of those and pass it to --fail-on"
+        )),
+    }
+}
+
+#[derive(Subcommand, Debug)]
 enum ConfigCommands {
     /// Print effective configuration
     Show,
@@ -372,6 +460,15 @@ impl Cli {
             OutputFormat::Human
         }
     }
+}
+
+/// Return true when stdout is attached to a TTY.
+///
+/// Used by subcommands that default to JSON when their output will be piped
+/// into another process (per safety-quality-v1/design.md Decision 9).
+fn is_stdout_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }
 
 fn init_tracing(cli: &Cli) -> Result<()> {
@@ -1301,6 +1398,409 @@ async fn run(cli: Cli) -> Result<i32> {
                 Ok(exit_code::BUILD_ERROR)
             }
         }
+
+        Commands::Quality { command } => match command {
+            QualityCommands::Audit { json, fail_on } => {
+                // Honour --json on the verb and the global --json, and
+                // fall back to JSON when stdout is not a TTY (Decision 9
+                // in safety-quality-v1/design.md).
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_audit_available() {
+                    let msg = "cargo-audit is not installed on PATH. smctl quality audit cannot run without it. Install it with: cargo install cargo-audit";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-audit",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would audit dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_audit(&root) {
+                    Ok(r) => smctl_quality::finalise_report(r, fail_on),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "audit_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.advisories.is_empty() {
+                    println!("audit passed: no advisories found");
+                } else {
+                    println!(
+                        "audit {}: {} advisory/advisories found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.advisory_count
+                    );
+                    for a in &report.advisories {
+                        println!(
+                            "  {} {} ({:?}) installed {} — patched in {}",
+                            a.advisory_id,
+                            a.crate_name,
+                            a.severity,
+                            a.installed,
+                            if a.patched.is_empty() {
+                                "(no fix available)".to_string()
+                            } else {
+                                a.patched.join(", ")
+                            }
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: run `cargo update -p <crate>` for each affected crate, or upgrade the direct dependency"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Deps {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_machete_available() {
+                    let msg = "cargo-machete is not installed on PATH. smctl quality deps cannot run without it. Install it with: cargo install cargo-machete";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-machete",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan for unused dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_deps(&root) {
+                    Ok(r) => smctl_quality::deps::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "deps_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.unused.is_empty() {
+                    println!("deps passed: no unused dependencies found");
+                } else {
+                    println!(
+                        "deps {}: {} unused dependency/dependencies found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.unused_count
+                    );
+                    for u in &report.unused {
+                        println!("  {} in {} ({})", u.dependency, u.manifest, u.crate_name);
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: remove each unused entry from the listed Cargo.toml, or add a `package.metadata.cargo-machete` ignore entry if the dependency is a false positive"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Unsafe {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_geiger_available() {
+                    let msg = "cargo-geiger is not installed on PATH. smctl quality unsafe cannot run without it. Install it with: cargo install cargo-geiger";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-geiger",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan unsafe code at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_unsafe(&root) {
+                    Ok(r) => smctl_quality::unsafe_scan::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "unsafe_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.crates.is_empty() {
+                    println!("unsafe passed: no unsafe code found");
+                } else {
+                    println!(
+                        "unsafe {}: {} crate(s) with unsafe code, {} site(s) total",
+                        if report.fail { "failed" } else { "completed" },
+                        report.crate_count,
+                        report.total_unsafe
+                    );
+                    for c in &report.crates {
+                        println!(
+                            "  {} {} — {} unsafe site(s)",
+                            c.crate_name, c.version, c.unsafe_count
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: review unsafe usage in each listed crate and either refactor to safe code or add a SAFETY: comment justifying each block"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Dsm {
+                json,
+                enforce_no_cycles,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_modules_available() {
+                    let msg = "cargo-modules is not installed on PATH. smctl quality dsm cannot run without it. Install it with: cargo install cargo-modules";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-modules",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would analyse module structure at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_dsm(&root) {
+                    Ok(r) => smctl_quality::dsm::finalise_report(r, enforce_no_cycles),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "dsm_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.cycles.is_empty() {
+                    println!(
+                        "dsm passed: no module dependency cycles across {} crate(s)",
+                        report.crates_scanned.len()
+                    );
+                } else {
+                    println!(
+                        "dsm {}: {} cycle(s) detected across {} crate(s)",
+                        if report.fail { "failed" } else { "completed" },
+                        report.cycle_count,
+                        report.crates_scanned.len()
+                    );
+                    for c in &report.cycles {
+                        println!(
+                            "  {}: {} <-> {} ({})",
+                            c.crate_name, c.module_a, c.module_b, c.via
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: break the reported cycle by extracting the shared abstraction into a parent module, or invert the dependency direction"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Complexity {
+                json,
+                cyclomatic_threshold,
+                cognitive_threshold,
+                path,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = path.clone().unwrap_or_else(|| {
+                    resolve_root().unwrap_or_else(|_| {
+                        std::env::current_dir().expect("failed to get current directory")
+                    })
+                });
+
+                if !smctl_quality::cargo_rust_code_analysis_available() {
+                    let msg = "rust-code-analysis-cli is not installed on PATH. smctl quality complexity cannot run without it. Install it with: cargo install rust-code-analysis-cli";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install rust-code-analysis-cli",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would measure complexity at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_complexity(&root) {
+                    Ok(r) => smctl_quality::complexity::finalise_report(
+                        r,
+                        cyclomatic_threshold,
+                        cognitive_threshold,
+                    ),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "complexity_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.violations.is_empty() {
+                    println!(
+                        "complexity passed: {} function(s) within thresholds (cyclomatic <= {}, cognitive <= {})",
+                        report.function_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                } else {
+                    println!(
+                        "complexity {}: {} function(s) exceed thresholds (cyclomatic > {}, cognitive > {})",
+                        if report.fail { "failed" } else { "completed" },
+                        report.violation_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                    for v in &report.violations {
+                        println!(
+                            "  {} in {}:{}-{} — cyclomatic {}, cognitive {}",
+                            v.function, v.file, v.start_line, v.end_line, v.cyclomatic, v.cognitive,
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: refactor each flagged function into smaller helpers, or add a justification comment with the rationale"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+        },
 
         Commands::Config { command } => {
             let mut config = smctl::SmctlConfig::load_user_config()?;
