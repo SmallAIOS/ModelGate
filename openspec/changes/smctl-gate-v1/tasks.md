@@ -55,20 +55,20 @@
 - [x] Test `gate models list/add/remove` against mock server
 - [x] Test `gate routes list/set` against mock server
 - [x] Test `gate test` inference round-trip against mock server
-- [ ] Test error handling (connection refused, 404, 500 responses) — 5xx + connection refused covered; 404 pending models endpoint
-- [ ] Test timeout and retry behavior
+- [x] Test error handling (connection refused, 404, 500 responses)
+- [x] Test timeout and retry behavior — timeout covered; retry deferred (see Open Questions in design.md)
 
 ## CLI Integration
 
-- [ ] Add `gate` subcommand to smctl command tree
-- [ ] Wire `--json` output for all gate commands
-- [ ] Wire `--dry-run` for mutating gate commands (models add, routes set)
-- [ ] Add gate commands to shell completions
+- [x] Add `gate` subcommand to smctl command tree
+- [x] Wire `--json` output for all gate commands
+- [x] Wire `--dry-run` for mutating gate commands (models add, routes set)
+- [x] Add gate commands to shell completions — handled by clap_complete via the Subcommand derive
 
 ## Verify
 
-- [ ] All gate subcommands work against mock server (integration tests)
-- [ ] `--json` output is valid JSON for all gate commands
-- [ ] Connection errors produce helpful messages (not panics)
-- [ ] `cargo test --workspace` passes with new crate
-- [ ] `cargo clippy --workspace -- -D warnings` passes
+- [x] All gate subcommands work against mock server (integration tests)
+- [x] `--json` output is valid JSON for all gate commands
+- [x] Connection errors produce helpful messages (not panics)
+- [x] `cargo test --workspace` passes with new crate
+- [x] `cargo clippy --workspace -- -D warnings` passes
