@@ -363,18 +363,32 @@ impl From<smctl_gate::GateError> for ApiError {
         use smctl_gate::GateError as G;
         let message = err.to_string();
         match err {
-            G::ConnectionRefused { .. } => ApiError {
-                status: StatusCode::BAD_GATEWAY,
-                kind: "upstream_unreachable",
-                message,
-                extra: serde_json::Value::Null,
-            },
-            G::Timeout { .. } => ApiError {
-                status: StatusCode::GATEWAY_TIMEOUT,
-                kind: "upstream_timeout",
-                message,
-                extra: serde_json::Value::Null,
-            },
+            G::ConnectionRefused { ref url } => {
+                tracing::warn!(
+                    msgid = %smctl_log::MsgId::WebUpstreamUnreachable,
+                    upstream = %url,
+                    "upstream ModelGate unreachable"
+                );
+                ApiError {
+                    status: StatusCode::BAD_GATEWAY,
+                    kind: "upstream_unreachable",
+                    message,
+                    extra: serde_json::Value::Null,
+                }
+            }
+            G::Timeout { timeout_secs } => {
+                tracing::warn!(
+                    msgid = %smctl_log::MsgId::WebUpstreamTimeout,
+                    timeout_secs = timeout_secs,
+                    "upstream ModelGate timed out"
+                );
+                ApiError {
+                    status: StatusCode::GATEWAY_TIMEOUT,
+                    kind: "upstream_timeout",
+                    message,
+                    extra: serde_json::Value::Null,
+                }
+            }
             G::HttpError { status, body } => ApiError {
                 status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
                 kind: "upstream_error",
@@ -446,11 +460,24 @@ pub async fn serve(config: WebServerConfig) -> Result<(), ServeError> {
             source,
         })?;
 
-    tracing::info!(addr = %config.bind, "modelgate-web server started");
+    tracing::info!(
+        msgid = %smctl_log::MsgId::WebServerStarted,
+        addr = %config.bind,
+        upstream = %config.gate.url,
+        "modelgate-web server started"
+    );
 
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .await
-        .map_err(|source| ServeError::Serve { source })
+        .map_err(|source| ServeError::Serve { source });
+
+    tracing::info!(
+        msgid = %smctl_log::MsgId::WebServerStopped,
+        addr = %config.bind,
+        "modelgate-web server stopped"
+    );
+
+    serve_result
 }
 
 #[cfg(test)]

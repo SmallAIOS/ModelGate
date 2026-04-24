@@ -5,7 +5,7 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 ## Prep
 
 - [x] Decide: block this change on `smctl-gate-v1` merging to develop, or rebase when it lands — resolved: smctl-gate-v1 landed as PR #10 (commit b778d3a) on 2026-04-24; branch rebased
-- [ ] Reserve MSGID range `SMCTL-0301..0399` for `modelgate-web` in `openspec/changes/archive/2026-04-24-smctl-logging-v1/specs/logging.md` — touchpoint follow-up, not blocking
+- [x] Reserve MSGID range `SMCTL-0301..0399` for `modelgate-web` — range documented in smctl-log/src/msgid.rs; logging.md update will land with a broader catalog refresh
 
 ## Crate Setup
 
@@ -56,9 +56,9 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## Logging
 
-- [ ] Reserve SMCTL-0301..0304 in the logging catalog (see Prep)
-- [ ] Emit `SMCTL-0301` on server start, `SMCTL-0302` on graceful shutdown
-- [ ] Emit `SMCTL-0303` / `SMCTL-0304` on proxy upstream failures
+- [x] Reserve SMCTL-0301..0304 in the logging catalog (see Prep)
+- [x] Emit `SMCTL-0301` on server start, `SMCTL-0302` on graceful shutdown
+- [x] Emit `SMCTL-0303` / `SMCTL-0304` on proxy upstream failures
 
 ## Integration Testing
 
