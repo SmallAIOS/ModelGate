@@ -1,6 +1,8 @@
 # ModelGate web — UI kit
 
-A **net-new** web dashboard for a ModelGate instance. No production web UI exists — this is a designer's proposal drawn against the contract in `ModelGate/openspec/changes/smctl-tool-v1/specs/cli-interface.md`. Every surface here maps 1:1 to a `smctl gate` subcommand.
+A design reference for the ModelGate dashboard. The **production** app now lives at [`ui/modelgate-web/`](../../modelgate-web/) and is served by the [`modelgate-web`](../../../modelgate-web/) Rust crate — run it with `smctl gate web`.
+
+This kit stays as the designer's source of truth: re-sync it on major redesigns, and diff the production app against it when adding new surfaces. Every surface here maps 1:1 to a `smctl gate` subcommand — the contract is declared in [`openspec/changes/archive/2026-04-24-smctl-gate-v1/specs/gate-api.md`](../../../openspec/changes/archive/2026-04-24-smctl-gate-v1/specs/gate-api.md).
 
 ## Files
 

@@ -69,19 +69,19 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## Voice / Design
 
-- [ ] Every string in `src/` passes a manual voice-rule review per `design-system-v1` (imperative buttons, canonical status vocab, no emoji)
-- [ ] Accessibility pass: every interactive element is `<button>` or `<a>`; command palette is `aria-modal`
-- [ ] `ui/ui_kits/modelgate_web/README.md` updated to note the production app is now at `ui/modelgate-web/`
+- [x] Every string in `src/` passes a manual voice-rule review per `design-system-v1` — empty states reuse CLI vocab ("No models registered", "No routes configured"), headings are sentence case, no emoji, no exclamation points
+- [x] Accessibility pass: every interactive element is `<button type="button">`; no divs with click handlers; tables use `<table>`/`<thead>`/`<tbody>` — command palette deferred (not in v1 shell)
+- [x] `ui/ui_kits/modelgate_web/README.md` updated to note the production app is now at `ui/modelgate-web/`
 
 ## Docs
 
-- [ ] Add "Web UI" section to repo README pointing at `smctl gate web`
-- [ ] Update `CLAUDE.md` Design System section to note the web app location
+- [x] Add "Web UI" section to repo README pointing at `smctl gate web`
+- [x] Update `CLAUDE.md` Design System section to note the web app location
 
 ## Verify
 
-- [ ] `cargo build --workspace` passes
-- [ ] `cargo test --workspace` passes
-- [ ] `cargo clippy --workspace -- -D warnings` stays clean
-- [ ] `npm run build` in `ui/modelgate-web/` produces a `dist/` under the 2 MB budget
-- [ ] `smctl gate web --open` boots, renders Overview, and shows real counts from a running ModelGate (or a clear "upstream unreachable" state against a dead upstream)
+- [x] `cargo build --workspace` passes
+- [x] `cargo test --workspace` passes — 201 tests across the workspace
+- [x] `cargo clippy --workspace -- -D warnings` stays clean
+- [x] `npm run build` in `ui/modelgate-web/` produces a `dist/` under the 2 MB budget — 700K (187 KB JS, 4 KB CSS, the rest sourcemaps)
+- [ ] `smctl gate web --open` boots, renders Overview, and shows real counts from a running ModelGate — manual smoke test, pending a running ModelGate. Dry-run path verified; the 502 "upstream_unreachable" state is covered by proxy_get_test.rs

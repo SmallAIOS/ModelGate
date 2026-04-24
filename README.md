@@ -68,6 +68,13 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `spec list` | List all specs (active + archived) |
 | `spec archive` | Move spec to archive + finish feature branch |
 | `build` | Build repos in dependency order |
+| `quality audit/deps/unsafe/dsm/complexity` | Engineering-quality checks |
+| `gate status` | Show health and summary metadata of a running ModelGate instance |
+| `gate models list/add/remove` | Inspect and manage registered models |
+| `gate routes list/set` | Inspect and configure the inference routing table |
+| `gate test <model> --input <file>` | Run a test inference against a model |
+| `gate logs [--follow]` | Stream ModelGate logs (Ctrl+C to exit) |
+| `gate web [--host] [--port] [--open]` | Start the ModelGate dashboard in a browser |
 | `config show/set/get` | Configuration management |
 | `completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
@@ -151,6 +158,10 @@ level = "info"                # error / warn / info / debug / trace
 - **smctl-spec** — OpenSpec workflow (scaffold, validate, archive)
 - **smctl-build** — dependency-ordered build orchestration
 - **smctl-log** — RFC 5424 tracing subscriber and MSGID catalog
+- **smctl-mcp** — MCP server exposing smctl tools and resources to AI agents
+- **smctl-quality** — engineering-quality checks (audit, deps, unsafe, dsm, complexity)
+- **smctl-gate** — ModelGate control-plane client (status, models, routes, inference, logs)
+- **modelgate-web** — Axum server serving the React dashboard SPA plus a JSON/SSE proxy to ModelGate
 
 ## Logging
 
@@ -165,6 +176,19 @@ Three transports are available and can run together:
 The level is set with `--log-level <error|warn|info|debug|trace>` or `SMCTL_LOG_LEVEL`; `-v` / `-vv` bump up, `-q` / `-qq` bump down. Defaults applied in precedence order: CLI flags, then env vars, then `[logging]` in `workspace.toml`, then built-in defaults (stderr only, info level, `local0` facility).
 
 The canonical MSGID catalog (`SMCTL-0001` through `SMCTL-0099`) lives in [`openspec/changes/smctl-logging-v1/specs/logging.md`](openspec/changes/smctl-logging-v1/specs/logging.md) — that document is the authoritative wire-format contract.
+
+## Web UI
+
+`smctl gate web` starts a local dashboard served by the [`modelgate-web`](modelgate-web/) crate. The server embeds a React SPA (built from [`ui/modelgate-web/`](ui/modelgate-web/)) and exposes a JSON + SSE proxy at `/api/*` that fronts the same ModelGate instance `smctl gate` already talks to.
+
+```bash
+smctl gate web --open        # bind 127.0.0.1:9378 and launch the default browser
+smctl gate web --port 9400   # use a different port
+```
+
+The dashboard mirrors the CLI surface: Overview reads `/api/health`, Models reads `/api/models`, Policy and Terminal render placeholder states until the upstream endpoints ship. For frontend development run `npm run dev` in `ui/modelgate-web/` side-by-side with `smctl gate web` — Vite proxies `/api/*` to `127.0.0.1:9378` on port `5173`.
+
+The default bind is `127.0.0.1`. Non-loopback binds emit a warning because there is no authentication layer yet.
 
 ## Design system
 
