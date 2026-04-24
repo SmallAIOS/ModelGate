@@ -10,16 +10,17 @@ repository.workspace = true
 smctl-gate = { path = "../smctl-gate" }
 smctl-log = { path = "../smctl-log" }
 
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tokio = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "multipart"] }
 wiremock = "0.6"
 serde_json.workspace = true

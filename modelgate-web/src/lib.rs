@@ -5,17 +5,18 @@
 //! [`smctl_gate::GateClient`]. The crate is wired into the `smctl` CLI
 //! under `smctl gate web`; it is not meant to run standalone.
 //!
-//! Status: Axum server + read-only `/api/*` proxy routes (health, models,
-//! routes). Mutating routes (POST / PUT / DELETE) and static-asset
-//! embedding land in follow-up commits on this branch.
+//! Status: Axum server + full JSON `/api/*` proxy surface (health,
+//! models list/add/remove, routes list/set, inference). SSE log
+//! passthrough and static-asset embedding land in follow-up commits.
 
 use std::net::SocketAddr;
 
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 pub const DEFAULT_BIND: SocketAddr = SocketAddr::new(
     std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -65,11 +66,14 @@ pub enum ServeError {
 /// `/api/*` handler can reach the upstream without re-constructing the
 /// HTTP layer per-request.
 pub fn router(client: smctl_gate::GateClient) -> Router {
+    use axum::routing::{delete, post};
     Router::new()
         .route("/api/_ping", get(ping))
         .route("/api/health", get(api_health))
-        .route("/api/models", get(api_list_models))
-        .route("/api/routes", get(api_list_routes))
+        .route("/api/models", get(api_list_models).post(api_add_model))
+        .route("/api/models/{name}", delete(api_remove_model))
+        .route("/api/routes", get(api_list_routes).put(api_set_route))
+        .route("/api/inference/{model}", post(api_test_inference))
         .with_state(client)
 }
 
@@ -103,6 +107,150 @@ async fn api_list_routes(
 ) -> Result<Response, ApiError> {
     let routes = client.list_routes().await.map_err(ApiError::from)?;
     Ok(Json(routes).into_response())
+}
+
+async fn api_remove_model(
+    State(client): State<smctl_gate::GateClient>,
+    Path(name): Path<String>,
+) -> Result<Response, ApiError> {
+    client.remove_model(&name).await.map_err(ApiError::from)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct SetRouteBody {
+    model: String,
+    endpoint: String,
+}
+
+async fn api_set_route(
+    State(client): State<smctl_gate::GateClient>,
+    Json(body): Json<SetRouteBody>,
+) -> Result<Response, ApiError> {
+    let route = client
+        .set_route(&body.model, &body.endpoint)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(route).into_response())
+}
+
+async fn api_test_inference(
+    State(client): State<smctl_gate::GateClient>,
+    Path(model): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Response, ApiError> {
+    // GateClient::test_inference reads the input from disk; stage the
+    // posted JSON in a tempfile, call through, and clean up.
+    let dir = tempfile::tempdir().map_err(|source| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        kind: "io",
+        message: format!("failed to create temp dir: {source}"),
+        extra: serde_json::Value::Null,
+    })?;
+    let tmp = dir.path().join("input.json");
+    let bytes = serde_json::to_vec(&payload).map_err(|source| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        kind: "bad_request",
+        message: format!("failed to re-serialize JSON: {source}"),
+        extra: serde_json::Value::Null,
+    })?;
+    tokio::fs::write(&tmp, &bytes)
+        .await
+        .map_err(|source| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            kind: "io",
+            message: format!("failed to write temp input: {source}"),
+            extra: serde_json::Value::Null,
+        })?;
+
+    let result = client
+        .test_inference(&model, &tmp)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(result).into_response())
+}
+
+/// Receive a multipart upload from the browser and stream it to the
+/// upstream via `GateClient::add_model`. The file is staged to a
+/// tempfile because `GateClient::add_model` takes a `&Path`; streaming
+/// through to the upstream without a tempfile is a future optimization
+/// once `smctl-gate` grows a byte-stream variant.
+async fn api_add_model(
+    State(client): State<smctl_gate::GateClient>,
+    mut multipart: Multipart,
+) -> Result<Response, ApiError> {
+    let dir = tempfile::tempdir().map_err(|source| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        kind: "io",
+        message: format!("failed to create temp dir: {source}"),
+        extra: serde_json::Value::Null,
+    })?;
+
+    let mut file_path: Option<std::path::PathBuf> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|source| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        kind: "bad_request",
+        message: format!("multipart read failed: {source}"),
+        extra: serde_json::Value::Null,
+    })? {
+        let field_name = field.name().unwrap_or_default().to_string();
+        if field_name != "file" {
+            // Silently drop other parts (e.g. "name") — GateClient derives
+            // the model name from the file stem.
+            continue;
+        }
+
+        let filename = field.file_name().unwrap_or("upload.bin").to_string();
+        let target = dir.path().join(&filename);
+        let mut out = tokio::fs::File::create(&target)
+            .await
+            .map_err(|source| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                kind: "io",
+                message: format!("failed to open temp file: {source}"),
+                extra: serde_json::Value::Null,
+            })?;
+
+        let mut field = field;
+        while let Some(chunk) = field.chunk().await.map_err(|source| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            kind: "bad_request",
+            message: format!("multipart chunk read failed: {source}"),
+            extra: serde_json::Value::Null,
+        })? {
+            out.write_all(&chunk).await.map_err(|source| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                kind: "io",
+                message: format!("failed to write temp file: {source}"),
+                extra: serde_json::Value::Null,
+            })?;
+        }
+        out.flush().await.map_err(|source| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            kind: "io",
+            message: format!("failed to flush temp file: {source}"),
+            extra: serde_json::Value::Null,
+        })?;
+
+        file_path = Some(target);
+        break;
+    }
+
+    let Some(file_path) = file_path else {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            kind: "bad_request",
+            message: "multipart upload missing `file` part".into(),
+            extra: serde_json::Value::Null,
+        });
+    };
+
+    let model = client
+        .add_model(&file_path, None)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(model).into_response())
 }
 
 // --- Error mapping ---

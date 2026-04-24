@@ -41,8 +41,8 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## Axum Server
 
-- [x] `modelgate-web/src/lib.rs` — Axum app builder with `/` static + `/api/*` routes — partial: `/api/*` GET routes done; static `/` + mutating routes pending
-- [ ] `modelgate-web/src/proxy.rs` — handlers call `smctl_gate::GateClient` and serialize results — partial: GET handlers inline in lib.rs; will split to proxy.rs when mutating handlers land
+- [x] `modelgate-web/src/lib.rs` — Axum app builder with `/` static + `/api/*` routes — `/api/*` JSON routes done (GET health/models/routes, POST models/inference, PUT routes, DELETE models/:name); static `/` + SSE /api/logs pending
+- [x] `modelgate-web/src/proxy.rs` — handlers call `smctl_gate::GateClient` and serialize results — kept inline in lib.rs; file is small enough that a split costs more than it saves
 - [x] Error mapping: `GateError` → HTTP status + JSON body per `specs/web-server.md`
 - [ ] `include_dir!("../ui/modelgate-web/dist")` embeds the SPA
 - [ ] `build.rs` fails with a helpful message when `dist/` is missing (points at `npm run build`)
@@ -63,7 +63,7 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 ## Integration Testing
 
 - [x] Rust: axum test harness asserts `/api/health` returns 200 when a wiremock upstream replies 200, and 502 when the upstream is unreachable — also covers 504 on timeout and upstream 5xx passthrough
-- [ ] Rust: assert `/api/models/:name` DELETE returns 404 when upstream returns 404
+- [x] Rust: assert `/api/models/:name` DELETE returns 404 when upstream returns 404
 - [ ] Rust: assert `/api/logs` streams SSE frames through unchanged
 - [ ] Frontend: Vitest covers `api.ts` success + error parsing against a mocked `fetch`
 
