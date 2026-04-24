@@ -49,10 +49,10 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## CLI Integration
 
-- [ ] Add `GateCommands::Web { host, port, open, dev }` to smctl
-- [ ] Wire dispatch: build `WebServerConfig`, call `modelgate_web::serve`
-- [ ] `--open` uses `open::that` crate (or `xdg-open` fallback) to launch the browser
-- [ ] `--dev` is reserved: returns "not yet available" with a remediation clause pointing at `npm run dev` + `smctl gate web` in separate terminals
+- [x] Add `GateCommands::Web { host, port, open }` to smctl — `--dev` deferred to a follow-up task block once the frontend dev server exists
+- [x] Wire dispatch: build `WebServerConfig`, call `modelgate_web::serve`
+- [x] `--open` launches the default browser via a hand-rolled platform opener (`open` / `xdg-open` / `cmd /c start`) — no new dep
+- [ ] `--dev` reserved flag — deferred until frontend scaffold lands
 
 ## Logging
 

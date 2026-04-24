@@ -479,6 +479,22 @@ enum GateCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Start the ModelGate web dashboard (Ctrl+C to stop)
+    Web {
+        /// Host/IP to bind. Defaults to 127.0.0.1 — remote binds are gated
+        /// behind a future --bind-public flag once auth lands.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// TCP port to bind. 9378 is MCP's 9377 plus one.
+        #[arg(long, default_value_t = 9378)]
+        port: u16,
+
+        /// Open the dashboard in the default browser after the server is up
+        #[arg(long)]
+        open: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -583,6 +599,29 @@ impl Cli {
 fn is_stdout_tty() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
+}
+
+/// Best-effort launch of `url` in the operator's default browser. Uses
+/// the platform-native opener (`open` on macOS, `xdg-open` on Linux,
+/// `cmd /c start` on Windows). Returns the first I/O error. No new
+/// dependency — small enough to hand-roll.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .status();
+    let status = result?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "browser opener exited with status {status}"
+        )))
+    }
 }
 
 fn human_bytes(n: u64) -> String {
@@ -2371,6 +2410,59 @@ async fn run(cli: Cli) -> Result<i32> {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                GateCommands::Web { host, port, open } => {
+                    use std::net::{IpAddr, SocketAddr};
+
+                    let ip: IpAddr = host.parse().map_err(|e| {
+                        anyhow::anyhow!(
+                            "invalid --host '{host}': {e}. Pass an IP literal like 127.0.0.1."
+                        )
+                    })?;
+                    let bind = SocketAddr::new(ip, port);
+
+                    if dry_run {
+                        println!(
+                            "would start modelgate-web at http://{bind}/ proxying {}",
+                            client.base_url()
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    if !ip.is_loopback() {
+                        eprintln!(
+                            "warning: binding to {ip} exposes the dashboard to the network. \
+                             modelgate-web has no authentication yet — use 127.0.0.1 unless \
+                             you have separate network controls in place."
+                        );
+                    }
+
+                    if open {
+                        let url = format!("http://{bind}/");
+                        if let Err(e) = open_in_browser(&url) {
+                            eprintln!(
+                                "warning: --open could not launch a browser ({e}); visit {url} manually"
+                            );
+                        }
+                    }
+
+                    println!("starting modelgate-web at http://{bind}/ (Ctrl+C to stop)");
+
+                    let config = modelgate_web::WebServerConfig {
+                        bind,
+                        gate: cfg.clone(),
+                    };
+                    match modelgate_web::serve(config).await {
+                        Ok(()) => Ok(exit_code::SUCCESS),
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            eprintln!(
+                                "remediation: check that port {port} is free (lsof -i :{port}) or pass --port <n>"
+                            );
+                            Ok(exit_code::GENERAL_ERROR)
                         }
                     }
                 }

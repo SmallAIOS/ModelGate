@@ -2253,6 +2253,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "futures-util",
+ "modelgate-web",
  "predicates",
  "serde",
  "serde_json",
