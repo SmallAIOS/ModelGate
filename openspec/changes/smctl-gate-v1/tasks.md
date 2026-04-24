@@ -31,10 +31,10 @@
 
 ## Route Configuration
 
-- [ ] Implement `GET /api/v1/routes` — list routes
-- [ ] Implement `PUT /api/v1/routes` — set route
-- [ ] Implement `smctl gate routes list` CLI subcommand
-- [ ] Implement `smctl gate routes set <model> <endpoint>` CLI subcommand
+- [x] Implement `GET /api/v1/routes` — list routes
+- [x] Implement `PUT /api/v1/routes` — set route
+- [x] Implement `smctl gate routes list` CLI subcommand
+- [x] Implement `smctl gate routes set <model> <endpoint>` CLI subcommand
 
 ## Inference Testing
 
@@ -53,7 +53,7 @@
 - [x] Set up `wiremock` mock ModelGate server
 - [x] Test `gate status` against mock server
 - [x] Test `gate models list/add/remove` against mock server
-- [ ] Test `gate routes list/set` against mock server
+- [x] Test `gate routes list/set` against mock server
 - [ ] Test `gate test` inference round-trip against mock server
 - [ ] Test error handling (connection refused, 404, 500 responses) — 5xx + connection refused covered; 404 pending models endpoint
 - [ ] Test timeout and retry behavior

@@ -447,6 +447,33 @@ enum GateCommands {
         #[command(subcommand)]
         command: GateModelsCommands,
     },
+
+    /// Inspect or configure the inference routing table
+    Routes {
+        #[command(subcommand)]
+        command: GateRoutesCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateRoutesCommands {
+    /// List all configured routes
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Set (or update) the route for a model
+    Set {
+        /// Model name
+        model: String,
+        /// Endpoint path (e.g. /v1/chat/completions)
+        endpoint: String,
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2181,6 +2208,71 @@ async fn run(cli: Cli) -> Result<i32> {
                                 Ok(exit_code::SUCCESS)
                             }
                             Err(e) => gate_error_exit(e, "models_remove_failed", cli.json),
+                        }
+                    }
+                },
+
+                GateCommands::Routes { command } => match command {
+                    GateRoutesCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/routes", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_routes().await {
+                            Ok(routes) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&routes)?);
+                                } else if routes.is_empty() {
+                                    println!("no routes configured");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<28} {:<8} REQUESTS",
+                                        "MODEL", "ENDPOINT", "ACTIVE"
+                                    );
+                                    for r in &routes {
+                                        println!(
+                                            "{:<22} {:<28} {:<8} {}",
+                                            r.model,
+                                            r.endpoint,
+                                            if r.active { "yes" } else { "no" },
+                                            r.request_count
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_list_failed", cli.json),
+                        }
+                    }
+
+                    GateRoutesCommands::Set {
+                        model,
+                        endpoint,
+                        json,
+                    } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would route model '{model}' -> {endpoint}");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.set_route(&model, &endpoint).await {
+                            Ok(route) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&route)?);
+                                } else {
+                                    println!(
+                                        "route set: {} -> {}",
+                                        route.model, route.endpoint
+                                    );
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_set_failed", cli.json),
                         }
                     }
                 },

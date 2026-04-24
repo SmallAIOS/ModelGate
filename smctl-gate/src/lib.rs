@@ -101,6 +101,16 @@ pub struct HealthStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Route {
+    pub model: String,
+    pub endpoint: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub request_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Model {
     pub name: String,
     pub format: String,
@@ -238,6 +248,41 @@ impl GateClient {
             .send()
             .await
             .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+        parse_json(resp).await
+    }
+
+    pub async fn list_routes(&self) -> Result<Vec<Route>, GateError> {
+        let url = format!("{}/api/v1/routes", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+        parse_json(resp).await
+    }
+
+    pub async fn set_route(&self, model: &str, endpoint: &str) -> Result<Route, GateError> {
+        let url = format!("{}/api/v1/routes", self.base_url);
+        let body = serde_json::json!({
+            "model": model,
+            "endpoint": endpoint,
+        });
+        let resp = self
+            .client
+            .put(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+
+        // A 404 on PUT /api/v1/routes means the target model is unknown.
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Err(GateError::ModelNotFound {
+                name: model.to_string(),
+            });
+        }
         parse_json(resp).await
     }
 
