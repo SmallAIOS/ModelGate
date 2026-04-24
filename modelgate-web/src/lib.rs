@@ -13,8 +13,10 @@ use std::net::SocketAddr;
 
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
+use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -74,6 +76,7 @@ pub fn router(client: smctl_gate::GateClient) -> Router {
         .route("/api/models/{name}", delete(api_remove_model))
         .route("/api/routes", get(api_list_routes).put(api_set_route))
         .route("/api/inference/{model}", post(api_test_inference))
+        .route("/api/logs", get(api_stream_logs))
         .with_state(client)
 }
 
@@ -251,6 +254,33 @@ async fn api_add_model(
         .await
         .map_err(ApiError::from)?;
     Ok(Json(model).into_response())
+}
+
+/// SSE passthrough for the upstream log stream. The browser connects
+/// once and receives a live event-stream of `LogEntry` JSON payloads.
+/// Each entry is re-emitted as one SSE `data:` frame.
+async fn api_stream_logs(
+    State(client): State<smctl_gate::GateClient>,
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
+{
+    let upstream = client.stream_logs().await.map_err(ApiError::from)?;
+
+    let events = upstream.map(|result| {
+        let event = match result {
+            Ok(entry) => match serde_json::to_string(&entry) {
+                Ok(json) => Event::default().data(json),
+                Err(e) => Event::default()
+                    .event("error")
+                    .data(format!("log entry re-serialisation failed: {e}")),
+            },
+            Err(e) => Event::default()
+                .event("error")
+                .data(format!("upstream log stream error: {e}")),
+        };
+        Ok::<_, std::convert::Infallible>(event)
+    });
+
+    Ok(Sse::new(events))
 }
 
 // --- Error mapping ---
