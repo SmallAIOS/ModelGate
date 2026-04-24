@@ -11,8 +11,16 @@ fn smctl() -> Command {
 }
 
 /// Initialize a workspace at the given path with a git repo.
+///
+/// Forces `init.defaultBranch=main` and writes `user.email` / `user.name`
+/// into the repo's local config, so that library-internal git operations
+/// (merge, commit) work on CI runners with no global gitconfig.
 fn init_workspace_with_git(root: &Path) {
-    let cmds: &[&[&str]] = &[&["git", "init"], &["git", "checkout", "-b", "main"]];
+    let cmds: &[&[&str]] = &[
+        &["git", "-c", "init.defaultBranch=main", "init"],
+        &["git", "config", "user.email", "test@test.com"],
+        &["git", "config", "user.name", "Test"],
+    ];
     for cmd in cmds {
         std::process::Command::new(cmd[0])
             .args(&cmd[1..])
