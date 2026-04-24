@@ -124,6 +124,27 @@ enum Commands {
         shell: Shell,
     },
 
+    /// Start a long-running service (MCP server, etc.)
+    Serve {
+        /// Run as an MCP server exposing smctl tools to AI coding assistants
+        #[arg(long)]
+        mcp: bool,
+
+        /// Use stdio transport (default when --mcp is set without another transport)
+        #[arg(long)]
+        stdio: bool,
+
+        /// Use SSE / streamable-HTTP transport (local only; mutually exclusive with --stdio)
+        #[arg(long)]
+        sse: bool,
+
+        /// TCP port for the SSE transport. The default 9377 spells "MCP" on
+        /// a phone keypad (M=6, C=2... the digits 9377 are chosen for
+        /// memorability and to stay well clear of well-known ports).
+        #[arg(long, default_value_t = 9377)]
+        port: u16,
+    },
+
     // --- Convenience aliases ---
     /// Start a feature branch + worktree (alias: flow feature start + worktree add)
     Feat {
@@ -446,7 +467,12 @@ fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSe
 async fn main() {
     let cli = Cli::parse();
 
-    if let Err(e) = init_tracing(&cli) {
+    // `serve --mcp` owns stdout for the MCP protocol and initializes
+    // tracing inside the subcommand handler so it can route logs to
+    // stderr via `smctl_log::init(..., stderr: true, file: None)`.
+    // Every other command uses the normal init_tracing path.
+    let defer_tracing = matches!(cli.command, Commands::Serve { mcp: true, .. });
+    if !defer_tracing && let Err(e) = init_tracing(&cli) {
         eprintln!("error: failed to initialize logging: {e:#}");
         process::exit(exit_code::GENERAL_ERROR);
     }
@@ -1331,6 +1357,66 @@ async fn run(cli: Cli) -> Result<i32> {
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "smctl", &mut std::io::stdout());
+            Ok(exit_code::SUCCESS)
+        }
+
+        Commands::Serve {
+            mcp,
+            stdio,
+            sse,
+            port,
+        } => {
+            if !mcp {
+                anyhow::bail!(
+                    "Serve mode not specified. You must choose a server surface. \
+                     Run `smctl serve --mcp --stdio` to start the MCP server on stdio."
+                );
+            }
+
+            if stdio && sse {
+                anyhow::bail!(
+                    "You specified both --stdio and --sse. \
+                     The MCP server binds to exactly one transport per invocation. \
+                     Re-run with only one transport flag."
+                );
+            }
+
+            // Resolve transport. Default to stdio when neither flag is
+            // set; `--sse` flips the switch regardless of `--port`
+            // (which always has a default). `--port` without `--sse` is
+            // silently ignored — the stdio transport has no port.
+            let transport = if sse {
+                let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+                smctl_mcp::Transport::Sse { addr }
+            } else {
+                smctl_mcp::Transport::Stdio
+            };
+
+            // MCP owns stdout on stdio; SSE routes all protocol bytes
+            // over the TCP socket, leaving stdout available. Either way,
+            // route tracing to stderr via the shared subscriber.
+            // `smctl_log::init` is idempotent and is the single owner of
+            // the tracing-subscriber registration
+            // (smctl-mcp-v1/design.md Decision 6).
+            let level = if cli.quiet {
+                smctl_log::LogLevel::Error
+            } else {
+                match cli.verbose {
+                    0 => smctl_log::LogLevel::Info,
+                    1 => smctl_log::LogLevel::Debug,
+                    _ => smctl_log::LogLevel::Trace,
+                }
+            };
+            let config = smctl_log::LoggingConfig {
+                level,
+                stderr: true,
+                file: cli.log_file.clone(),
+                ..Default::default()
+            };
+            smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let root = resolve_root()?;
+            smctl_mcp::start_server(root, transport).await?;
             Ok(exit_code::SUCCESS)
         }
 
