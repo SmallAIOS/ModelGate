@@ -12,6 +12,8 @@ smctl-log = { path = "../smctl-log" }
 
 axum = { version = "0.8", features = ["multipart"] }
 tower-http = { version = "0.6", features = ["trace"] }
+include_dir = "0.7"
+mime_guess = "2"
 tokio = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

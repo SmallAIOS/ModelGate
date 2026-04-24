@@ -1,0 +1,244 @@
+/* =============================================================================
+   SmallAIOS Design System — Foundations
+   Colors, type, spacing, shadow, radius, motion.
+   Import once at the root of any page or HTML artifact.
+   ============================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* --- Neutrals (light) ------------------------------------------------------ */
+  --bg-0:  #F7F7F5;   /* canvas */
+  --bg-1:  #FFFFFF;   /* card / surface */
+  --bg-2:  #EFEFEC;   /* raised row / hover */
+  --bg-3:  #E4E4DF;   /* pressed / selected */
+
+  --fg-0:  #0B0C0E;   /* primary text, ink */
+  --fg-1:  #2A2D33;   /* secondary text */
+  --fg-2:  #6A6E78;   /* tertiary text / muted */
+  --fg-3:  #C7C9CE;   /* borders / dividers */
+  --fg-4:  #E7E8EB;   /* subtle rules */
+
+  /* --- Signal (status) ------------------------------------------------------- */
+  --sig-ok:    #1F8F4E;   /* verified, online, passed */
+  --sig-ok-bg: #E6F4EC;
+  --sig-warn:  #B7791F;   /* warning, pending */
+  --sig-warn-bg:#FBF3E2;
+  --sig-err:   #B01E2B;   /* failed, destructive */
+  --sig-err-bg:#F8E5E7;
+  --sig-info:  #1E4FB0;
+  --sig-info-bg:#E6ECF8;
+
+  /* --- Spot color ------------------------------------------------------------ */
+  --ion:     #3451FF;   /* active / focus / primary action */
+  --ion-2:   #1E34C8;   /* pressed */
+  --ion-bg:  #E9ECFF;   /* tinted row */
+
+  /* --- Type scale ------------------------------------------------------------ */
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-xs:   12px;
+  --fs-sm:   13px;
+  --fs-base: 14px;
+  --fs-md:   16px;
+  --fs-lg:   20px;
+  --fs-xl:   28px;
+  --fs-2xl:  40px;
+
+  --lh-tight: 1.2;
+  --lh-body:  1.5;
+  --lh-loose: 1.65;
+
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+
+  --tracking-tight: -0.01em;
+  --tracking-caps:   0.08em;
+
+  /* --- Spacing (4/8 grid) ---------------------------------------------------- */
+  --space-0:   0;
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+
+  /* --- Radii ---------------------------------------------------------------- */
+  --radius-0: 0;
+  --radius-1: 4px;
+  --radius-2: 6px;
+  --radius-3: 8px;
+  --radius-pill: 999px;
+
+  /* --- Shadows (tight, cool, 2 elevations) ---------------------------------- */
+  --shadow-1:
+    0 0 0 1px rgba(11,12,14,0.06),
+    0 1px 2px rgba(11,12,14,0.06),
+    0 4px 8px rgba(11,12,14,0.04);
+  --shadow-2:
+    0 0 0 1px rgba(11,12,14,0.08),
+    0 2px 4px rgba(11,12,14,0.08),
+    0 16px 24px rgba(11,12,14,0.08);
+
+  /* --- Motion --------------------------------------------------------------- */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-micro: 120ms;
+  --dur-base:  200ms;
+  --dur-large: 320ms;
+
+  /* --- Protection gradient --------------------------------------------------- */
+  --protect-gradient: linear-gradient(to bottom, rgba(255,255,255,0.92), rgba(255,255,255,0));
+
+  /* --- Semantic mappings (use these over raw tokens in components) ---------- */
+  --color-canvas:       var(--bg-0);
+  --color-surface:      var(--bg-1);
+  --color-surface-hover:var(--bg-2);
+  --color-border:       var(--fg-3);
+  --color-border-soft:  var(--fg-4);
+  --color-text:         var(--fg-0);
+  --color-text-muted:   var(--fg-2);
+  --color-link:         var(--ion);
+
+  /* --- Semantic type roles (use as classes below) --------------------------- */
+}
+
+/* Dark mode --------------------------------------------------------------- */
+:root[data-theme="dark"],
+.dark {
+  --bg-0:  #0B0C0E;
+  --bg-1:  #131418;
+  --bg-2:  #1B1D22;
+  --bg-3:  #262930;
+
+  --fg-0:  #F3F4F6;
+  --fg-1:  #C7CAD1;
+  --fg-2:  #8A8F99;
+  --fg-3:  #2E3139;
+  --fg-4:  #1E2026;
+
+  --sig-ok:    #3BCB72;
+  --sig-ok-bg: #0E2A1A;
+  --sig-warn:  #E0A64A;
+  --sig-warn-bg:#2A2011;
+  --sig-err:   #E56372;
+  --sig-err-bg:#2A1115;
+  --sig-info:  #6E8FF0;
+  --sig-info-bg:#121A2E;
+
+  --ion:    #6E83FF;
+  --ion-2:  #8A9BFF;
+  --ion-bg: #1A1E3D;
+
+  --shadow-1:
+    0 0 0 1px rgba(0,0,0,0.6),
+    0 1px 2px rgba(0,0,0,0.5),
+    0 4px 8px rgba(0,0,0,0.4);
+  --shadow-2:
+    0 0 0 1px rgba(0,0,0,0.7),
+    0 2px 4px rgba(0,0,0,0.6),
+    0 16px 24px rgba(0,0,0,0.6);
+
+  --protect-gradient: linear-gradient(to bottom, rgba(11,12,14,0.92), rgba(11,12,14,0));
+}
+
+/* =============================================================================
+   Semantic type roles
+   ============================================================================= */
+.ds-display {
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xl);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-0);
+}
+.ds-h1 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xl);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-0);
+}
+.ds-h2 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  line-height: 1.3;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-0);
+}
+.ds-h3 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-0);
+}
+.ds-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-regular);
+  color: var(--fg-1);
+}
+.ds-small {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.ds-caption {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--fg-2);
+}
+.ds-label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.ds-code,
+.ds-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.ds-mono-lg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.ds-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-1);
+  color: var(--fg-1);
+}
+
+/* Global base reset tailored for design-system pages */
+.ds-root {
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}

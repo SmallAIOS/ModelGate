@@ -16,36 +16,36 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## Frontend Scaffold
 
-- [ ] `npm create vite@latest ui/modelgate-web -- --template react-ts` (or equivalent hand-scaffold)
-- [ ] Add `react`, `react-dom`, `lucide-react`, `@tanstack/react-query`, `typescript`
-- [ ] Copy `ui/colors_and_type.css` → `ui/modelgate-web/src/styles.css`
-- [ ] Port `ui/ui_kits/modelgate_web/Shell.jsx` → `src/Shell.tsx`
-- [ ] Port `ui/ui_kits/modelgate_web/Screens.jsx` → `src/Screens.tsx`
-- [ ] Port `ui/ui_kits/modelgate_web/App.jsx` → `src/App.tsx` (hash-router)
-- [ ] Extract inline icons to `src/components/Icon.tsx` using `lucide-react`
-- [ ] `npm run typecheck` passes
+- [x] Hand-scaffold `ui/modelgate-web/` (Vite + React + TS) — chose hand-scaffold over `npm create` for deterministic output
+- [x] Add `react`, `react-dom`, `lucide-react`, `@tanstack/react-query`, `typescript`
+- [x] Copy `ui/colors_and_type.css` → `ui/modelgate-web/src/styles.css`
+- [ ] Port `ui/ui_kits/modelgate_web/Shell.jsx` → `src/Shell.tsx` — consolidated into App.tsx for v1; split when components warrant it
+- [ ] Port `ui/ui_kits/modelgate_web/Screens.jsx` → `src/Screens.tsx` — consolidated into App.tsx for v1
+- [x] Port `ui/ui_kits/modelgate_web/App.jsx` → `src/App.tsx` (hash-router)
+- [ ] Extract inline icons to `src/components/Icon.tsx` using `lucide-react` — deferred until we add icons
+- [x] `npm run typecheck` passes
 
 ## API Client
 
-- [ ] `src/api.ts` declares `HealthStatus`, `Model`, `Route`, `LogEntry`, `GateApi`
-- [ ] Implement `health()`, `listModels()`, `listRoutes()` (GET-only for v1 commit)
-- [ ] `GateApiError` class with `{ kind, status, body }`
-- [ ] `useHealth`, `useModels`, `useRoutes` hooks backed by React Query
+- [x] `src/api.ts` declares `HealthStatus`, `Model`, `Route`, `LogEntry`, `GateApi`
+- [x] Implement `health()`, `listModels()`, `listRoutes()` + mutating methods (remove, setRoute, testInference)
+- [x] `GateApiError` class with `{ kind, status, body }`
+- [x] `useHealth`, `useModels`, `useRoutes` hooks backed by React Query — inline via `useQuery` per screen; extract if they sprout params
 
 ## Wire Screens to Data
 
-- [ ] `OverviewScreen` reads `useHealth()` + `useModels()` for counts
-- [ ] `ModelsScreen` reads `useModels()`; register / remove actions stubbed (disabled buttons + "coming soon" tooltip)
-- [ ] `PolicyScreen` renders "not yet available" state — blocked on ModelGate policy endpoint
-- [ ] `TerminalScreen` renders "open in terminal" CTA that links to `smctl gate logs` — embedded xterm.js deferred to follow-up change
+- [x] `OverviewScreen` reads `useHealth()` + `useModels()` for counts
+- [x] `ModelsScreen` reads `useModels()`; register / remove actions deferred to follow-up commit
+- [x] `PolicyScreen` renders "not yet available" state — blocked on ModelGate policy endpoint
+- [x] `TerminalScreen` renders "open in terminal" CTA that links to `smctl gate logs` — embedded xterm.js deferred to follow-up change
 
 ## Axum Server
 
 - [x] `modelgate-web/src/lib.rs` — Axum app builder with `/` static + `/api/*` routes — `/api/*` fully wired (GET health/models/routes, POST models/inference, PUT routes, DELETE models/:name, GET logs SSE); static `/` pending
 - [x] `modelgate-web/src/proxy.rs` — handlers call `smctl_gate::GateClient` and serialize results — kept inline in lib.rs; file is small enough that a split costs more than it saves
 - [x] Error mapping: `GateError` → HTTP status + JSON body per `specs/web-server.md`
-- [ ] `include_dir!("../ui/modelgate-web/dist")` embeds the SPA
-- [ ] `build.rs` fails with a helpful message when `dist/` is missing (points at `npm run build`)
+- [x] `include_dir!("../ui/modelgate-web/dist")` embeds the SPA — fallback serves `index.html` for non-asset paths so hash routing survives reloads; unmatched `/api/*` returns JSON 404 instead of leaking the shell
+- [x] `build.rs` fails with a helpful message when `dist/` is missing (points at `npm run build`)
 
 ## CLI Integration
 

@@ -12,13 +12,19 @@
 use std::net::SocketAddr;
 
 use axum::extract::{Multipart, Path, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
 use futures_util::StreamExt;
+use include_dir::{Dir, include_dir};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+
+/// Built SPA bundle. Produced by `npm run build` in
+/// `ui/modelgate-web/`. `build.rs` verifies the directory exists
+/// before this macro runs.
+static SPA_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../ui/modelgate-web/dist");
 
 pub const DEFAULT_BIND: SocketAddr = SocketAddr::new(
     std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
@@ -78,6 +84,46 @@ pub fn router(client: smctl_gate::GateClient) -> Router {
         .route("/api/inference/{model}", post(api_test_inference))
         .route("/api/logs", get(api_stream_logs))
         .with_state(client)
+        .fallback(serve_spa)
+}
+
+/// Serves the built SPA for any non-`/api/*` request.
+///
+/// Exact asset paths (e.g. `/assets/index-abc.js`) resolve directly
+/// against the embedded bundle. Everything else falls back to
+/// `index.html` so the hash-router in the SPA can handle client-side
+/// routing without 404s on reload.
+///
+/// Unmatched `/api/*` paths return a JSON 404 instead of the SPA shell,
+/// so machine clients that check content-type see an honest failure.
+async fn serve_spa(req: axum::extract::Request) -> Response {
+    let raw_path = req.uri().path();
+    if raw_path.starts_with("/api/") || raw_path == "/api" {
+        let body = serde_json::json!({
+            "error": "not_found",
+            "message": format!("no route for {raw_path}"),
+        });
+        return (StatusCode::NOT_FOUND, Json(body)).into_response();
+    }
+
+    let path = raw_path.trim_start_matches('/');
+    let file = SPA_DIST
+        .get_file(path)
+        .or_else(|| SPA_DIST.get_file("index.html"));
+    match file {
+        Some(f) => {
+            let mime = mime_guess::from_path(f.path())
+                .first_or_octet_stream()
+                .as_ref()
+                .to_string();
+            ([(header::CONTENT_TYPE, mime)], f.contents().to_vec()).into_response()
+        }
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "index.html missing from bundle",
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Debug, Serialize)]
