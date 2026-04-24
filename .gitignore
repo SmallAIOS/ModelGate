@@ -15,6 +15,9 @@ Thumbs.db
 # Local artifacts (AI-generated, temp files, not for git)
 .local/
 
+# Git worktrees (sibling branches checked out for parallel work)
+.worktrees/
+
 # Secrets
 *.pem
 *.key

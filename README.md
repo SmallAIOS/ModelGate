@@ -142,6 +142,14 @@ openspec_dir = "openspec"     # default: "openspec"
 - **smctl-spec** — OpenSpec workflow (scaffold, validate, archive)
 - **smctl-build** — dependency-ordered build orchestration
 
+## Design system
+
+The canonical design source for SmallAIOS / ModelGate / `smctl` surfaces — CLI output, docs, slides, future web UI — lives in [`ui/`](ui/). Start with [`ui/README.md`](ui/README.md) for voice, tokens, iconography, and brand rules. The contract form is declared in [`openspec/changes/design-system-v1/specs/design-system.md`](openspec/changes/design-system-v1/specs/design-system.md); when the two disagree, the spec wins.
+
+Contributors using Claude Code auto-load the rules via the `smallaios-design` skill at [`.claude/skills/smallaios-design/`](.claude/skills/smallaios-design/).
+
+Fonts (IBM Plex Sans, JetBrains Mono), the logo marks in `ui/assets/`, and the Lucide icon set are all adopted as **placeholders** — superseded by future `design-system-v2`, `brand-v1`, and bespoke-icon changes respectively.
+
 ## License
 
 MIT OR Apache-2.0

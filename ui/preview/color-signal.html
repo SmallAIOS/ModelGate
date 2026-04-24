@@ -1,0 +1,24 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .sw{border:1px solid var(--fg-3);border-radius:4px;overflow:hidden;background:var(--bg-1);}
+  .chip{height:56px;display:flex;align-items:center;padding:0 12px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:8px;box-shadow:0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);}
+  .status{font-family:var(--font-mono);font-size:11px;color:#fff;letter-spacing:0.06em;text-transform:uppercase;}
+  .meta{padding:8px 10px;font-family:var(--font-mono);font-size:11px;display:flex;justify-content:space-between;}
+  .name{color:var(--fg-0);font-weight:500;} .hex{color:var(--fg-2);}
+</style></head>
+<body class="ds-root"><div class="card">
+  <div class="grid">
+    <div class="sw"><div class="chip" style="background:#1F8F4E;color:#fff"><span class="dot"></span><span class="status">OK</span></div><div class="meta"><span class="name">sig-ok</span><span class="hex">1F8F4E</span></div></div>
+    <div class="sw"><div class="chip" style="background:#B7791F;color:#fff"><span class="dot"></span><span class="status">WARN</span></div><div class="meta"><span class="name">sig-warn</span><span class="hex">B7791F</span></div></div>
+    <div class="sw"><div class="chip" style="background:#B01E2B;color:#fff"><span class="dot"></span><span class="status">ERR</span></div><div class="meta"><span class="name">sig-err</span><span class="hex">B01E2B</span></div></div>
+    <div class="sw"><div class="chip" style="background:#1E4FB0;color:#fff"><span class="dot"></span><span class="status">INFO</span></div><div class="meta"><span class="name">sig-info</span><span class="hex">1E4FB0</span></div></div>
+    <div class="sw"><div class="chip" style="background:#E6F4EC;color:#1F8F4E"><span class="dot"></span><span class="status" style="color:#1F8F4E">verified</span></div><div class="meta"><span class="name">ok-bg</span><span class="hex">E6F4EC</span></div></div>
+    <div class="sw"><div class="chip" style="background:#FBF3E2;color:#B7791F"><span class="dot"></span><span class="status" style="color:#B7791F">pending</span></div><div class="meta"><span class="name">warn-bg</span><span class="hex">FBF3E2</span></div></div>
+    <div class="sw"><div class="chip" style="background:#F8E5E7;color:#B01E2B"><span class="dot"></span><span class="status" style="color:#B01E2B">failed</span></div><div class="meta"><span class="name">err-bg</span><span class="hex">F8E5E7</span></div></div>
+    <div class="sw"><div class="chip" style="background:#E6ECF8;color:#1E4FB0"><span class="dot"></span><span class="status" style="color:#1E4FB0">info</span></div><div class="meta"><span class="name">info-bg</span><span class="hex">E6ECF8</span></div></div>
+  </div>
+</div></body></html>
