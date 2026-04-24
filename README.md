@@ -90,6 +90,9 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `-v, --verbose` | Increase verbosity (repeatable: -v, -vv, -vvv) |
 | `-q, --quiet` | Suppress non-error output |
 | `--no-color` | Disable colored output |
+| `--log-level <LEVEL>` | `error` / `warn` / `info` / `debug` / `trace` (also `SMCTL_LOG_LEVEL`) |
+| `--log-file <PATH>` | Append RFC 5424 events to a file (also `SMCTL_LOG_FILE`) |
+| `--log-syslog` | Emit to local syslog Unix socket, Unix only (also `SMCTL_LOG_SYSLOG`) |
 
 ## workspace.toml Reference
 
@@ -130,17 +133,38 @@ base_dir = ".worktrees"       # default: ".worktrees"
 
 [spec]
 openspec_dir = "openspec"     # default: "openspec"
+
+[logging]
+transports = ["stderr"]       # any of "stderr", "file", "syslog"
+file = "/var/log/smctl.log"   # only used when "file" is in transports
+facility = "local0"           # local0..local7 or daemon
+level = "info"                # error / warn / info / debug / trace
 ```
 
 ## Architecture
 
-5-crate Cargo workspace:
+6-crate Cargo workspace:
 
 - **smctl** — CLI binary (clap derive, subcommand dispatch)
 - **smctl-workspace** — workspace manifest, repo status, worktree management
 - **smctl-flow** — git flow branching (feature, release, hotfix lifecycle)
 - **smctl-spec** — OpenSpec workflow (scaffold, validate, archive)
 - **smctl-build** — dependency-ordered build orchestration
+- **smctl-log** — RFC 5424 tracing subscriber and MSGID catalog
+
+## Logging
+
+All `smctl` log events conform to [RFC 5424](https://datatracker.ietf.org/doc/html/rfc5424) (The Syslog Protocol). The `smctl-log` crate owns the subscriber, the wire format, and the MSGID catalog; every other crate uses the `tracing` macros and inherits the format.
+
+Three transports are available and can run together:
+
+- **stderr** (default) — RFC 5424 lines to `std::io::stderr`
+- **file** — set via `--log-file <path>` or `SMCTL_LOG_FILE`; append-only, creates parent directories
+- **syslog** — set via `--log-syslog` or `SMCTL_LOG_SYSLOG`; local Unix socket (`/dev/log` on Linux, `/var/run/syslog` on macOS). Unsupported on Windows — the flag warns and falls back to stderr. On open-failure the subscriber emits one `SMCTL-0099` warning and continues on stderr.
+
+The level is set with `--log-level <error|warn|info|debug|trace>` or `SMCTL_LOG_LEVEL`; `-v` / `-vv` bump up, `-q` / `-qq` bump down. Defaults applied in precedence order: CLI flags, then env vars, then `[logging]` in `workspace.toml`, then built-in defaults (stderr only, info level, `local0` facility).
+
+The canonical MSGID catalog (`SMCTL-0001` through `SMCTL-0099`) lives in [`openspec/changes/smctl-logging-v1/specs/logging.md`](openspec/changes/smctl-logging-v1/specs/logging.md) — that document is the authoritative wire-format contract.
 
 ## Design system
 

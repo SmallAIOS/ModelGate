@@ -43,6 +43,19 @@ struct Cli {
     #[arg(short = 'c', long, global = true, env = "SMCTL_CONFIG")]
     config: Option<PathBuf>,
 
+    /// Log level (error, warn, info, debug, trace). Overrides -v/-q.
+    #[arg(long, global = true, env = "SMCTL_LOG_LEVEL")]
+    log_level: Option<String>,
+
+    /// Write RFC 5424 syslog events to this file (append).
+    #[arg(long, global = true, env = "SMCTL_LOG_FILE")]
+    log_file: Option<PathBuf>,
+
+    /// Also emit RFC 5424 events to the local syslog Unix socket.
+    /// Unix only; on Windows this warns and falls back to stderr.
+    #[arg(long, global = true, env = "SMCTL_LOG_SYSLOG")]
+    log_syslog: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -340,37 +353,114 @@ impl Cli {
     }
 }
 
-fn init_tracing(verbose: u8, quiet: bool) {
-    let level = if quiet {
-        "error"
-    } else {
-        match verbose {
-            0 => "warn",
-            1 => "info",
-            2 => "debug",
-            _ => "trace",
+fn init_tracing(cli: &Cli) -> Result<()> {
+    // Precedence (highest first): CLI flags > env vars > workspace.toml
+    // [logging] > built-in defaults. CLI + env are fused by clap's
+    // `env` attribute, so `cli.log_*` already reflects that layer.
+    // Load the manifest optionally — missing workspace is not an
+    // error here; we just fall through to defaults.
+    let manifest_logging = load_manifest_logging(cli);
+    let m = manifest_logging.as_ref();
+
+    let level = if let Some(explicit) = &cli.log_level {
+        explicit
+            .parse::<smctl_log::LogLevel>()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else if cli.quiet {
+        smctl_log::LogLevel::Error
+    } else if cli.verbose > 0 {
+        match cli.verbose {
+            1 => smctl_log::LogLevel::Debug,
+            _ => smctl_log::LogLevel::Trace,
         }
+    } else if let Some(level) = m.and_then(|l| l.level.as_deref()) {
+        level
+            .parse::<smctl_log::LogLevel>()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        smctl_log::LogLevel::Info
     };
 
-    let env_filter = std::env::var("SMCTL_LOG").unwrap_or_else(|_| level.to_string());
+    // Resolve transports. CLI/env come first: an explicit --log-file
+    // means "file is on"; --log-syslog means "syslog is on". Anything
+    // the CLI did not set gets filled from the manifest's transports
+    // list, and stderr is on by default if no other transport speaks.
+    let file = cli
+        .log_file
+        .clone()
+        .or_else(|| m.and_then(|l| l.file.clone()));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(false)
-        .init();
+    let manifest_wants = |name: &str| -> bool {
+        m.map(|l| l.transports.iter().any(|t| t == name))
+            .unwrap_or(false)
+    };
+
+    let syslog = cli.log_syslog || manifest_wants("syslog");
+
+    // stderr: on when explicitly listed in the manifest, or by default
+    // when no file transport is active. Verbose runs also force it on
+    // so interactive users still see events even with --log-file.
+    let stderr_from_manifest = manifest_wants("stderr");
+    let emit_stderr = if stderr_from_manifest {
+        true
+    } else if file.is_some() || syslog {
+        cli.verbose > 0
+    } else {
+        true
+    };
+
+    let facility = m
+        .and_then(|l| l.facility.as_deref())
+        .and_then(smctl_workspace::facility_code)
+        .unwrap_or(16);
+
+    let config = smctl_log::LoggingConfig {
+        level,
+        stderr: emit_stderr,
+        file,
+        syslog,
+        facility,
+        ..Default::default()
+    };
+
+    smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Best-effort load of the `[logging]` section from `workspace.toml`.
+/// Silently returns `None` when there is no workspace, the manifest
+/// is unreadable, or the section is absent. Failures here MUST NOT
+/// block CLI startup — logging is observability, not a hard
+/// dependency.
+fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSection> {
+    let root = if let Some(ref path) = cli.workspace {
+        path.clone()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        smctl::find_workspace_root(&cwd)?
+    };
+    let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
+    manifest.logging
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    init_tracing(cli.verbose, cli.quiet);
+    if let Err(e) = init_tracing(&cli) {
+        eprintln!("error: failed to initialize logging: {e:#}");
+        process::exit(exit_code::GENERAL_ERROR);
+    }
 
     let result = run(cli).await;
 
     match result {
         Ok(code) => process::exit(code),
         Err(e) => {
+            tracing::error!(
+                msgid = %smctl_log::MsgId::Uncategorized,
+                error = %e,
+                "unhandled error"
+            );
             eprintln!("error: {e:#}");
             process::exit(exit_code::GENERAL_ERROR);
         }
@@ -415,6 +505,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
 
                 let manifest = smctl_workspace::init_workspace(&root, &ws_name)?;
+                tracing::info!(
+                    msgid = %smctl_log::MsgId::WorkspaceInitialized,
+                    name = %manifest.workspace.name,
+                    path = %root.display(),
+                    "initialized workspace"
+                );
                 println!(
                     "{}",
                     format_output_with(&manifest, fmt, |m| {
@@ -843,6 +939,12 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
 
                     let info = smctl_spec::new_spec(&openspec_dir, &name)?;
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::SpecCreated,
+                        name = %info.name,
+                        path = %info.path.display(),
+                        "spec created"
+                    );
                     println!(
                         "{}",
                         format_output_with(&info, fmt, |i| {
@@ -857,10 +959,20 @@ async fn run(cli: Cli) -> Result<i32> {
                     {
                         match smctl_flow::feature_start(&root, &manifest, &name, None) {
                             Ok(result) => {
+                                tracing::info!(
+                                    msgid = %smctl_log::MsgId::FeatureStarted,
+                                    name = %name,
+                                    branch = %result.branch_name,
+                                    "feature branch created"
+                                );
                                 println!("created branch '{}'", result.branch_name);
                             }
                             Err(e) => {
-                                tracing::warn!("could not auto-create branch: {e}");
+                                tracing::warn!(
+                                    msgid = %smctl_log::MsgId::Uncategorized,
+                                    error = %e,
+                                    "could not auto-create branch"
+                                );
                             }
                         }
                     }
@@ -954,6 +1066,12 @@ async fn run(cli: Cli) -> Result<i32> {
                         return Ok(exit_code::DRY_RUN);
                     }
                     let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::SpecArchived,
+                        name = %spec_name,
+                        path = %dest.display(),
+                        "spec archived"
+                    );
                     println!("archived spec '{}' to {}", spec_name, dest.display());
 
                     // Auto-finish feature branch if workspace is available
@@ -963,10 +1081,20 @@ async fn run(cli: Cli) -> Result<i32> {
                     {
                         match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
                             Ok(result) => {
+                                tracing::info!(
+                                    msgid = %smctl_log::MsgId::FeatureFinished,
+                                    name = %spec_name,
+                                    branch = %result.branch_name,
+                                    "feature branch merged"
+                                );
                                 println!("merged branch '{}' into develop", result.branch_name);
                             }
                             Err(e) => {
-                                tracing::warn!("could not auto-finish branch: {e}");
+                                tracing::warn!(
+                                    msgid = %smctl_log::MsgId::Uncategorized,
+                                    error = %e,
+                                    "could not auto-finish branch"
+                                );
                             }
                         }
                     }
@@ -1079,11 +1207,47 @@ async fn run(cli: Cli) -> Result<i32> {
                 return Ok(exit_code::DRY_RUN);
             }
 
+            tracing::info!(
+                msgid = %smctl_log::MsgId::BuildStarted,
+                repo = repo.as_deref().unwrap_or("*"),
+                parallel = parallel,
+                "build started"
+            );
+
             let report = if parallel {
                 smctl_build::build_parallel(&root, &manifest, repo.as_deref(), test, clean)?
             } else {
                 smctl_build::build(&root, &manifest, repo.as_deref(), test, clean)?
             };
+
+            let passed_count = report.results.iter().filter(|r| r.success).count();
+            let failed_count = report.results.len() - passed_count;
+            if report.all_passed {
+                tracing::info!(
+                    msgid = %smctl_log::MsgId::BuildCompleted,
+                    repo = repo.as_deref().unwrap_or("*"),
+                    duration_ms = report.total_duration_ms as u64,
+                    passed_count = passed_count as u64,
+                    failed_count = failed_count as u64,
+                    "build completed"
+                );
+            } else {
+                let first_failure = report
+                    .results
+                    .iter()
+                    .find(|r| !r.success)
+                    .map(|r| r.repo_name.as_str())
+                    .unwrap_or("");
+                tracing::error!(
+                    msgid = %smctl_log::MsgId::BuildFailed,
+                    repo = repo.as_deref().unwrap_or("*"),
+                    duration_ms = report.total_duration_ms as u64,
+                    passed_count = passed_count as u64,
+                    failed_count = failed_count as u64,
+                    first_failure = first_failure,
+                    "build failed"
+                );
+            }
 
             println!(
                 "{}",
