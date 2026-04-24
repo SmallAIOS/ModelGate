@@ -786,7 +786,10 @@ bogus = "nope"
 "#;
         let err = WorkspaceManifest::parse(toml_text).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("bogus"), "error should cite the unknown key: {msg}");
+        assert!(
+            msg.contains("bogus"),
+            "error should cite the unknown key: {msg}"
+        );
     }
 
     #[test]

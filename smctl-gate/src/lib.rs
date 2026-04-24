@@ -311,9 +311,7 @@ impl GateClient {
     pub async fn stream_logs(
         &self,
     ) -> Result<
-        std::pin::Pin<
-            Box<dyn futures_util::Stream<Item = Result<LogEntry, GateError>> + Send>,
-        >,
+        std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<LogEntry, GateError>> + Send>>,
         GateError,
     > {
         let url = format!("{}/api/v1/logs", self.base_url);
@@ -334,9 +332,9 @@ impl GateClient {
             });
         }
 
-        let byte_stream = resp.bytes_stream().map(|r| {
-            r.map_err(|source| GateError::Transport { source })
-        });
+        let byte_stream = resp
+            .bytes_stream()
+            .map(|r| r.map_err(|source| GateError::Transport { source }));
 
         Ok(Box::pin(sse_log_stream(byte_stream)))
     }
@@ -361,8 +359,8 @@ impl GateClient {
             }
         })?;
 
-        let payload: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|source| GateError::ParseError { source })?;
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|source| GateError::ParseError { source })?;
 
         let url = format!(
             "{}/api/v1/inference/{}",
@@ -387,11 +385,7 @@ impl GateClient {
     }
 
     pub async fn remove_model(&self, name: &str) -> Result<(), GateError> {
-        let url = format!(
-            "{}/api/v1/models/{}",
-            self.base_url,
-            urlencoding_path(name)
-        );
+        let url = format!("{}/api/v1/models/{}", self.base_url, urlencoding_path(name));
         let resp = self
             .client
             .delete(&url)

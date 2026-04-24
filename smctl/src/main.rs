@@ -602,11 +602,7 @@ fn human_bytes(n: u64) -> String {
 
 /// Render a `GateError` to stdout (JSON) or stderr (human + remediation)
 /// and return the conventional general-error exit code.
-fn gate_error_exit(
-    err: smctl_gate::GateError,
-    error_kind: &str,
-    global_json: bool,
-) -> Result<i32> {
+fn gate_error_exit(err: smctl_gate::GateError, error_kind: &str, global_json: bool) -> Result<i32> {
     let want_json = global_json || !is_stdout_tty();
     let msg = format!("{err}");
     if want_json {
@@ -2156,8 +2152,7 @@ async fn run(cli: Cli) -> Result<i32> {
                         let want_json = json || cli.json || !is_stdout_tty();
 
                         if !path.exists() {
-                            let msg =
-                                format!("file not found: {}", path.display());
+                            let msg = format!("file not found: {}", path.display());
                             if want_json {
                                 let err = serde_json::json!({
                                     "error": "file_not_found",
@@ -2174,12 +2169,8 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
 
                         if dry_run {
-                            let size =
-                                std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                            let name = path
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("model");
+                            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
                             println!(
                                 "would upload {} ({}) and register as '{}'",
                                 path.display(),
@@ -2201,8 +2192,7 @@ async fn run(cli: Cli) -> Result<i32> {
                                 let mut last_guard = last_for_cb.lock().unwrap();
                                 // Throttle updates to once per ~1% so large uploads
                                 // don't spam the terminal.
-                                let step =
-                                    total.map(|t| (t / 100).max(1)).unwrap_or(256 * 1024);
+                                let step = total.map(|t| (t / 100).max(1)).unwrap_or(256 * 1024);
                                 if sent - *last_guard >= step || Some(sent) == total {
                                     *last_guard = sent;
                                     match total {
@@ -2324,10 +2314,7 @@ async fn run(cli: Cli) -> Result<i32> {
                                 if want_json {
                                     println!("{}", serde_json::to_string_pretty(&route)?);
                                 } else {
-                                    println!(
-                                        "route set: {} -> {}",
-                                        route.model, route.endpoint
-                                    );
+                                    println!("route set: {} -> {}", route.model, route.endpoint);
                                 }
                                 Ok(exit_code::SUCCESS)
                             }
@@ -2340,10 +2327,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     let want_json = json || cli.json || !is_stdout_tty();
 
                     if dry_run {
-                        println!(
-                            "would open SSE stream {} /api/v1/logs",
-                            client.base_url()
-                        );
+                        println!("would open SSE stream {} /api/v1/logs", client.base_url());
                         return Ok(exit_code::DRY_RUN);
                     }
 
@@ -2391,11 +2375,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
                 }
 
-                GateCommands::Test {
-                    model,
-                    input,
-                    json,
-                } => {
+                GateCommands::Test { model, input, json } => {
                     let want_json = json || cli.json || !is_stdout_tty();
 
                     if !input.exists() {
@@ -2435,10 +2415,7 @@ async fn run(cli: Cli) -> Result<i32> {
                                 if let Some(t) = result.tokens_generated {
                                     println!("  tokens:   {t}");
                                 }
-                                println!(
-                                    "  output:   {}",
-                                    serde_json::to_string(&result.output)?
-                                );
+                                println!("  output:   {}", serde_json::to_string(&result.output)?);
                             }
                             Ok(exit_code::SUCCESS)
                         }

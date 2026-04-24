@@ -58,7 +58,10 @@ async fn health_surfaces_http_error() {
 
 #[tokio::test]
 async fn health_flags_connection_refused_against_dead_port() {
-    let err = client("http://127.0.0.1:1".into()).health().await.unwrap_err();
+    let err = client("http://127.0.0.1:1".into())
+        .health()
+        .await
+        .unwrap_err();
     assert!(
         matches!(err, GateError::ConnectionRefused { .. }),
         "expected ConnectionRefused, got {err:?}"
