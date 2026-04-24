@@ -20,6 +20,12 @@ pub struct WorkspaceManifest {
     /// Declared in `openspec/changes/smctl-logging-v1/specs/logging.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logging: Option<LoggingManifestSection>,
+
+    /// Optional `[gate]` table. When absent, callers use the
+    /// smctl-gate defaults (`http://localhost:8080`, 30s timeout).
+    /// Declared in `openspec/changes/smctl-gate-v1/specs/gate-api.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<GateManifestSection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +189,24 @@ pub struct LoggingManifestSection {
     pub level: Option<String>,
 }
 
+/// The `[gate]` section of `workspace.toml`.
+///
+/// Both fields are optional. When unset, the defaults in
+/// `smctl_gate::GateConfig::default()` apply. Precedence is resolved by
+/// the CLI: CLI flags / env vars (`MODELGATE_URL`) > this section >
+/// built-in defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateManifestSection {
+    /// ModelGate endpoint URL (e.g. `"http://localhost:8080"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Request timeout in seconds for all gate operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
 /// Map a facility name from the spec's table to its RFC 5424 numeric
 /// code. Returns `None` for unknown names. Exposed so the CLI
 /// precedence resolver can translate the manifest value without
@@ -296,6 +320,7 @@ pub fn init_workspace(root: &Path, name: &str) -> Result<WorkspaceManifest> {
         worktree: WorktreeConfig::default(),
         spec: SpecConfig::default(),
         logging: None,
+        gate: None,
     };
 
     manifest.save_to_root(root)?;
@@ -721,6 +746,47 @@ facility = "kern"
             msg.contains("kern"),
             "error should cite the bad name: {msg}"
         );
+    }
+
+    #[test]
+    fn test_gate_section_parses() {
+        let toml_text = r#"
+[workspace]
+name = "gate-ws"
+
+[gate]
+url = "http://gate.internal:9000"
+timeout_secs = 120
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let gate = manifest.gate.expect("gate section present");
+        assert_eq!(gate.url.as_deref(), Some("http://gate.internal:9000"));
+        assert_eq!(gate.timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn test_gate_section_absent_is_none() {
+        let toml_text = r#"
+[workspace]
+name = "no-gate"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        assert!(manifest.gate.is_none());
+    }
+
+    #[test]
+    fn test_gate_section_rejects_unknown_fields() {
+        let toml_text = r#"
+[workspace]
+name = "strict-gate"
+
+[gate]
+url = "http://x:8080"
+bogus = "nope"
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("bogus"), "error should cite the unknown key: {msg}");
     }
 
     #[test]

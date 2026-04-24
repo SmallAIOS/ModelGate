@@ -10,9 +10,9 @@
 ## API Client Core
 
 - [x] Define `GateClient` struct with base URL, timeout, reqwest client
-- [ ] Implement endpoint configuration resolution (CLI flag > env > workspace.toml > default) — CLI + env + default done; workspace.toml pending
+- [x] Implement endpoint configuration resolution (CLI flag > env > workspace.toml > default)
 - [x] Define error types for gate operations (connection, HTTP, parse errors)
-- [ ] Add `[gate]` section to workspace.toml schema
+- [x] Add `[gate]` section to workspace.toml schema
 
 ## Health & Status
 

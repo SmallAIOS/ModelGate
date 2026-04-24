@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
@@ -727,6 +727,23 @@ fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSe
     };
     let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
     manifest.logging
+}
+
+/// Best-effort load of the `[gate]` section from `workspace.toml`.
+/// Silently returns `None` when there is no workspace, the manifest
+/// is unreadable, or the section is absent. Failures here MUST NOT
+/// block `smctl gate` — the client falls back to `DEFAULT_URL`.
+fn load_manifest_gate(
+    workspace_override: Option<&Path>,
+) -> Option<smctl_workspace::GateManifestSection> {
+    let root = if let Some(path) = workspace_override {
+        path.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        smctl::find_workspace_root(&cwd)?
+    };
+    let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
+    manifest.gate
 }
 
 #[tokio::main]
@@ -2028,10 +2045,26 @@ async fn run(cli: Cli) -> Result<i32> {
             timeout,
             command,
         } => {
-            let resolved_url = url.unwrap_or_else(|| smctl_gate::DEFAULT_URL.to_string());
+            // Precedence: --url / MODELGATE_URL (fused by clap's `env`) >
+            // workspace.toml [gate].url > DEFAULT_URL. --timeout is a
+            // clap arg with a default value, so it always has a concrete
+            // number; we only consult [gate].timeout_secs when the user
+            // left the default untouched.
+            let manifest_gate = load_manifest_gate(cli.workspace.as_deref());
+            let resolved_url = url
+                .or_else(|| manifest_gate.as_ref().and_then(|g| g.url.clone()))
+                .unwrap_or_else(|| smctl_gate::DEFAULT_URL.to_string());
+            let resolved_timeout = if timeout == smctl_gate::DEFAULT_TIMEOUT_SECS {
+                manifest_gate
+                    .as_ref()
+                    .and_then(|g| g.timeout_secs)
+                    .unwrap_or(timeout)
+            } else {
+                timeout
+            };
             let cfg = smctl_gate::GateConfig {
                 url: resolved_url,
-                timeout_secs: timeout,
+                timeout_secs: resolved_timeout,
             };
 
             let client = match smctl_gate::GateClient::new(cfg.clone()) {
