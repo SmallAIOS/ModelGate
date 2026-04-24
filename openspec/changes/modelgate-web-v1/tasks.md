@@ -4,15 +4,15 @@ Ordered so each block lands as one commit. Plan of record — ticked as work lan
 
 ## Prep
 
-- [ ] Decide: block this change on `smctl-gate-v1` merging to develop, or rebase when it lands (preferred: wait for merge, keep this branch rebased)
+- [x] Decide: block this change on `smctl-gate-v1` merging to develop, or rebase when it lands — resolved: smctl-gate-v1 landed as PR #10 (commit b778d3a) on 2026-04-24; branch rebased
 - [ ] Reserve MSGID range `SMCTL-0301..0399` for `modelgate-web` in `openspec/changes/archive/2026-04-24-smctl-logging-v1/specs/logging.md` — touchpoint follow-up, not blocking
 
 ## Crate Setup
 
-- [ ] Create `modelgate-web/` crate with Cargo.toml (axum, tower-http, include_dir deps)
-- [ ] Add `modelgate-web` as workspace member in root Cargo.toml
-- [ ] Add `smctl-gate` dependency (the crate reuses `GateClient`)
-- [ ] `cargo build --workspace` passes with an empty `dist/` stub
+- [x] Create `modelgate-web/` crate with Cargo.toml (axum, tower-http deps) — `include_dir` deferred to the "embed the built bundle" task in Axum Server
+- [x] Add `modelgate-web` as workspace member in root Cargo.toml
+- [x] Add `smctl-gate` dependency (the crate reuses `GateClient`)
+- [x] `cargo build --workspace` passes — stub `_ping` route + two passing tests ship the vertical
 
 ## Frontend Scaffold
 

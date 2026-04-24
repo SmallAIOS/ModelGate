@@ -1,0 +1,25 @@
+[package]
+name = "modelgate-web"
+description = "ModelGate web dashboard — Axum server + embedded React SPA (launched via smctl gate web)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+smctl-gate = { path = "../smctl-gate" }
+smctl-log = { path = "../smctl-log" }
+
+axum = "0.8"
+tower-http = { version = "0.6", features = ["trace"] }
+tokio = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+reqwest = { workspace = true, features = ["json"] }
+wiremock = "0.6"
+serde_json.workspace = true
