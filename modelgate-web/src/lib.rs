@@ -5,13 +5,15 @@
 //! [`smctl_gate::GateClient`]. The crate is wired into the `smctl` CLI
 //! under `smctl gate web`; it is not meant to run standalone.
 //!
-//! Status: scaffold only. Route handlers live in follow-up commits on
-//! this branch. This lib currently exposes the public shape
-//! (`WebServerConfig`, `serve`) and a health route so the workspace
-//! builds end-to-end before we pull in the frontend.
+//! Status: Axum server + read-only `/api/*` proxy routes (health, models,
+//! routes). Mutating routes (POST / PUT / DELETE) and static-asset
+//! embedding land in follow-up commits on this branch.
 
 use std::net::SocketAddr;
 
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
 
@@ -65,6 +67,9 @@ pub enum ServeError {
 pub fn router(client: smctl_gate::GateClient) -> Router {
     Router::new()
         .route("/api/_ping", get(ping))
+        .route("/api/health", get(api_health))
+        .route("/api/models", get(api_list_models))
+        .route("/api/routes", get(api_list_routes))
         .with_state(client)
 }
 
@@ -80,6 +85,129 @@ async fn ping() -> Json<Ping> {
         server: "modelgate-web",
     })
 }
+
+async fn api_health(State(client): State<smctl_gate::GateClient>) -> Result<Response, ApiError> {
+    let health = client.health().await.map_err(ApiError::from)?;
+    Ok(Json(health).into_response())
+}
+
+async fn api_list_models(
+    State(client): State<smctl_gate::GateClient>,
+) -> Result<Response, ApiError> {
+    let models = client.list_models().await.map_err(ApiError::from)?;
+    Ok(Json(models).into_response())
+}
+
+async fn api_list_routes(
+    State(client): State<smctl_gate::GateClient>,
+) -> Result<Response, ApiError> {
+    let routes = client.list_routes().await.map_err(ApiError::from)?;
+    Ok(Json(routes).into_response())
+}
+
+// --- Error mapping ---
+
+/// Handler-local wrapper that maps a `GateError` to the HTTP status and
+/// JSON body defined in `openspec/changes/modelgate-web-v1/specs/web-server.md`.
+#[derive(Debug)]
+pub struct ApiError {
+    pub status: StatusCode,
+    pub kind: &'static str,
+    pub message: String,
+    pub extra: serde_json::Value,
+}
+
+impl ApiError {
+    fn body(&self) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "error": self.kind,
+            "message": self.message,
+        });
+        if let Some(obj) = body.as_object_mut()
+            && let Some(extra_obj) = self.extra.as_object()
+        {
+            for (k, v) in extra_obj {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        body
+    }
+}
+
+impl From<smctl_gate::GateError> for ApiError {
+    fn from(err: smctl_gate::GateError) -> Self {
+        use smctl_gate::GateError as G;
+        let message = err.to_string();
+        match err {
+            G::ConnectionRefused { .. } => ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                kind: "upstream_unreachable",
+                message,
+                extra: serde_json::Value::Null,
+            },
+            G::Timeout { .. } => ApiError {
+                status: StatusCode::GATEWAY_TIMEOUT,
+                kind: "upstream_timeout",
+                message,
+                extra: serde_json::Value::Null,
+            },
+            G::HttpError { status, body } => ApiError {
+                status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                kind: "upstream_error",
+                message: format!("HTTP {status}: {body}"),
+                extra: serde_json::json!({ "status": status, "body": body }),
+            },
+            G::ModelNotFound { name } => ApiError {
+                status: StatusCode::NOT_FOUND,
+                kind: "model_not_found",
+                message,
+                extra: serde_json::json!({ "name": name }),
+            },
+            G::FileNotFound { path } => ApiError {
+                status: StatusCode::BAD_REQUEST,
+                kind: "file_not_found",
+                message,
+                extra: serde_json::json!({ "path": path }),
+            },
+            G::ParseError { .. } => ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                kind: "upstream_parse_error",
+                message,
+                extra: serde_json::Value::Null,
+            },
+            G::Transport { .. } => ApiError {
+                status: StatusCode::BAD_GATEWAY,
+                kind: "transport",
+                message,
+                extra: serde_json::Value::Null,
+            },
+            G::Io { .. } => ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                kind: "io",
+                message,
+                extra: serde_json::Value::Null,
+            },
+            G::InvalidUrl { .. } => ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                kind: "invalid_config",
+                message,
+                extra: serde_json::Value::Null,
+            },
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (self.status, Json(self.body())).into_response()
+    }
+}
+
+// Unused for now but exported so future handlers don't need to rewrite
+// the import list. Silences dead-code warnings when the proxy only uses
+// GET routes.
+#[allow(dead_code)]
+fn _reserve_path_extractor(_: Path<String>) {}
 
 /// Bind and serve the dashboard until the process is signalled.
 pub async fn serve(config: WebServerConfig) -> Result<(), ServeError> {
