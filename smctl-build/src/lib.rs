@@ -140,7 +140,11 @@ fn build_inner(
         Some(name) => {
             let _target = manifest
                 .find_repo(name)
-                .with_context(|| format!("repo '{name}' not found"))?;
+                .with_context(|| {
+                    format!(
+                        "repo '{name}' not found. It is not registered in the workspace manifest, so smctl cannot plan the build. Run `smctl workspace status` to see registered repos, or add it with `smctl workspace add <url> --name {name}`."
+                    )
+                })?;
             let deps = collect_deps(manifest, name);
             build_order
                 .into_iter()
@@ -312,7 +316,11 @@ fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
     let repo_path = root.join(repo.local_path());
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
-        anyhow::bail!("empty command");
+        anyhow::bail!(
+            "empty command for repo '{}'. There is no shell invocation to run, so the build step cannot proceed. Set a non-empty `build_cmd` for this repo in `.smctl/workspace.toml`, or remove the repo with `smctl workspace remove {}`.",
+            repo.name,
+            repo.name
+        );
     }
 
     let output = Command::new(parts[0])
@@ -324,11 +332,16 @@ fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr_first_line = stderr.lines().next().unwrap_or("").trim();
+        let stderr_hint = if stderr_first_line.is_empty() {
+            String::new()
+        } else {
+            format!(" First stderr line: {stderr_first_line}")
+        };
         anyhow::bail!(
-            "{}: command '{}' failed:\n{}",
-            repo.name,
-            cmd,
-            String::from_utf8_lossy(&output.stderr)
+            "command '{cmd}' failed in repo '{}'. The build step did not complete; any downstream steps are skipped. Re-run the command directly in the repo directory to see full output.{stderr_hint}",
+            repo.name
         );
     }
 }

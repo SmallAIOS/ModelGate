@@ -321,7 +321,12 @@ fn start_branch(
         // Check base branch exists
         git_repo
             .find_branch(base, git2::BranchType::Local)
-            .with_context(|| format!("base branch '{base}' not found in {}", repo.name))?;
+            .with_context(|| {
+                format!(
+                    "base branch '{base}' not found in {}. smctl cannot start a feature branch from a base that does not exist in this repo. Run `smctl flow init` to create the `develop` branch, or list existing branches with `git -C {} branch -a`.",
+                    repo.name, repo.name
+                )
+            })?;
     }
 
     // Phase 2: execute
