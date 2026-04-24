@@ -250,7 +250,7 @@ fn test_spec_ff() {
         .arg(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("proposal=ok"))
+        .stdout(predicate::str::contains("proposal=present"))
         .stdout(predicate::str::contains("tasks:"));
 }
 

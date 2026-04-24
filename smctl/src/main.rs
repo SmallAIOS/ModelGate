@@ -482,13 +482,7 @@ async fn run(cli: Cli) -> Result<i32> {
                         ss.iter()
                             .map(|s| {
                                 let state = if s.clean { "clean" } else { "dirty" };
-                                format!(
-                                    "  {:<16} {:<16} {} {}",
-                                    s.name,
-                                    s.branch,
-                                    if s.clean { "\u{2713}" } else { "\u{2717}" },
-                                    state
-                                )
+                                format!("  {:<16} {:<16} {}", s.name, s.branch, state)
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -635,8 +629,8 @@ async fn run(cli: Cli) -> Result<i32> {
                         r.repos
                             .iter()
                             .map(|rr| {
-                                let icon = if rr.success { "\u{2713}" } else { "\u{2717}" };
-                                format!("  {} {} — {}", icon, rr.repo_name, rr.message)
+                                let status = if rr.success { "passed" } else { "failed" };
+                                format!("  {} {} — {}", status, rr.repo_name, rr.message)
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -990,14 +984,18 @@ async fn run(cli: Cli) -> Result<i32> {
                     println!("phase: {:?}", info.phase);
                     println!(
                         "documents: proposal={} design={} tasks={}",
-                        if info.has_proposal { "ok" } else { "MISSING" },
-                        if info.has_design { "ok" } else { "MISSING" },
-                        if info.has_tasks { "ok" } else { "MISSING" },
+                        if info.has_proposal {
+                            "present"
+                        } else {
+                            "absent"
+                        },
+                        if info.has_design { "present" } else { "absent" },
+                        if info.has_tasks { "present" } else { "absent" },
                     );
                     println!("tasks: {}/{} complete", info.tasks_done, info.tasks_total);
 
                     if result.valid {
-                        println!("validation: PASS");
+                        println!("validation: passed");
                         if info.tasks_total > 0 && info.tasks_done == info.tasks_total {
                             println!("ready to archive");
                         } else {
@@ -1005,7 +1003,7 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
                         Ok(exit_code::SUCCESS)
                     } else {
-                        println!("validation: FAIL");
+                        println!("validation: failed");
                         for issue in &result.issues {
                             println!("  - {issue}");
                         }
@@ -1092,14 +1090,14 @@ async fn run(cli: Cli) -> Result<i32> {
                         .results
                         .iter()
                         .map(|br| {
-                            let icon = if br.success { "\u{2713}" } else { "\u{2717}" };
-                            format!("  {} {}", icon, br.repo_name)
+                            let status = if br.success { "passed" } else { "failed" };
+                            format!("  {} {}", status, br.repo_name)
                         })
                         .collect();
                     if r.all_passed {
                         lines.push(format!("\nbuild passed ({}ms)", r.total_duration_ms));
                     } else {
-                        lines.push(format!("\nbuild FAILED ({}ms)", r.total_duration_ms));
+                        lines.push(format!("\nbuild failed ({}ms)", r.total_duration_ms));
                     }
                     lines.join("\n")
                 })
@@ -1227,7 +1225,7 @@ async fn run(cli: Cli) -> Result<i32> {
             if report.all_passed {
                 println!("build passed");
             } else {
-                println!("build FAILED");
+                println!("build failed");
             }
             if report.all_passed {
                 Ok(exit_code::SUCCESS)
