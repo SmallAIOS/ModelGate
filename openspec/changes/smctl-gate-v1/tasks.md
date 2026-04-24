@@ -2,23 +2,23 @@
 
 ## Crate Setup
 
-- [ ] Create `smctl-gate` crate with Cargo.toml (reqwest, tokio dependencies)
-- [ ] Add `smctl-gate` as workspace member in root Cargo.toml
-- [ ] Add `smctl-gate` dependency to `smctl` binary crate
-- [ ] Verify workspace builds with `cargo build --workspace`
+- [x] Create `smctl-gate` crate with Cargo.toml (reqwest, tokio dependencies)
+- [x] Add `smctl-gate` as workspace member in root Cargo.toml
+- [x] Add `smctl-gate` dependency to `smctl` binary crate
+- [x] Verify workspace builds with `cargo build --workspace`
 
 ## API Client Core
 
-- [ ] Define `GateClient` struct with base URL, timeout, reqwest client
-- [ ] Implement endpoint configuration resolution (CLI flag > env > workspace.toml > default)
-- [ ] Define error types for gate operations (connection, HTTP, parse errors)
+- [x] Define `GateClient` struct with base URL, timeout, reqwest client
+- [ ] Implement endpoint configuration resolution (CLI flag > env > workspace.toml > default) — CLI + env + default done; workspace.toml pending
+- [x] Define error types for gate operations (connection, HTTP, parse errors)
 - [ ] Add `[gate]` section to workspace.toml schema
 
 ## Health & Status
 
-- [ ] Implement `GET /health` client method
-- [ ] Implement `smctl gate status` CLI subcommand
-- [ ] Display instance version, uptime, model count, health state
+- [x] Implement `GET /health` client method
+- [x] Implement `smctl gate status` CLI subcommand
+- [x] Display instance version, uptime, model count, health state
 
 ## Model Management
 
@@ -50,12 +50,12 @@
 
 ## Integration Testing
 
-- [ ] Set up `wiremock` mock ModelGate server
-- [ ] Test `gate status` against mock server
+- [x] Set up `wiremock` mock ModelGate server
+- [x] Test `gate status` against mock server
 - [ ] Test `gate models list/add/remove` against mock server
 - [ ] Test `gate routes list/set` against mock server
 - [ ] Test `gate test` inference round-trip against mock server
-- [ ] Test error handling (connection refused, 404, 500 responses)
+- [ ] Test error handling (connection refused, 404, 500 responses) — 5xx + connection refused covered; 404 pending models endpoint
 - [ ] Test timeout and retry behavior
 
 ## CLI Integration

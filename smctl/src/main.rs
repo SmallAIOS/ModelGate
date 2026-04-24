@@ -118,6 +118,20 @@ enum Commands {
         command: QualityCommands,
     },
 
+    /// Talk to a running ModelGate instance (status, models, routes, test, logs)
+    Gate {
+        /// ModelGate endpoint URL (overrides MODELGATE_URL env and workspace.toml)
+        #[arg(long, env = "MODELGATE_URL", global = true)]
+        url: Option<String>,
+
+        /// Request timeout in seconds
+        #[arg(long, default_value_t = smctl_gate::DEFAULT_TIMEOUT_SECS, global = true)]
+        timeout: u64,
+
+        #[command(subcommand)]
+        command: GateCommands,
+    },
+
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -415,6 +429,16 @@ enum QualityCommands {
         /// Scope the scan to this subdirectory instead of the workspace root
         #[arg(long)]
         path: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateCommands {
+    /// Show the health and summary metadata of the ModelGate instance
+    Status {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1849,6 +1873,81 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::SUCCESS)
                     } else {
                         Ok(exit_code::GENERAL_ERROR)
+                    }
+                }
+            }
+        }
+
+        Commands::Gate {
+            url,
+            timeout,
+            command,
+        } => {
+            let resolved_url = url.unwrap_or_else(|| smctl_gate::DEFAULT_URL.to_string());
+            let cfg = smctl_gate::GateConfig {
+                url: resolved_url,
+                timeout_secs: timeout,
+            };
+
+            match command {
+                GateCommands::Status { json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    let client = match smctl_gate::GateClient::new(cfg.clone()) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let msg = format!("{e}");
+                            if want_json {
+                                let err = serde_json::json!({
+                                    "error": "invalid_config",
+                                    "message": msg,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&err)?);
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: pass --url http://<host>:<port> or set MODELGATE_URL to a valid URL"
+                                );
+                            }
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+                    };
+
+                    if dry_run {
+                        println!("would query {} for /health", client.base_url());
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.health().await {
+                        Ok(h) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&h)?);
+                            } else {
+                                println!("ModelGate status:");
+                                println!("  URL:     {}", client.base_url());
+                                println!("  Status:  {}", h.status);
+                                println!("  Version: {}", h.version);
+                                println!("  Uptime:  {}s", h.uptime_secs);
+                                println!("  Models:  {}", h.model_count);
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => {
+                            let msg = format!("{e}");
+                            if want_json {
+                                let err = serde_json::json!({
+                                    "error": "gate_unreachable",
+                                    "message": msg,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&err)?);
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: start ModelGate and retry, or point smctl at a reachable instance with --url or MODELGATE_URL"
+                                );
+                            }
+                            Ok(exit_code::GENERAL_ERROR)
+                        }
                     }
                 }
             }
