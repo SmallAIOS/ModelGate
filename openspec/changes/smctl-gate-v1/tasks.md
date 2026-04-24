@@ -44,9 +44,9 @@
 
 ## Log Streaming
 
-- [ ] Implement `GET /api/v1/logs` SSE client for log streaming
-- [ ] Implement `smctl gate logs [--follow]` CLI subcommand
-- [ ] Handle graceful shutdown on Ctrl+C during log streaming
+- [x] Implement `GET /api/v1/logs` SSE client for log streaming
+- [x] Implement `smctl gate logs [--follow]` CLI subcommand
+- [x] Handle graceful shutdown on Ctrl+C during log streaming
 
 ## Integration Testing
 

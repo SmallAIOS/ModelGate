@@ -467,6 +467,18 @@ enum GateCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Stream logs from the ModelGate instance (exit with Ctrl+C)
+    Logs {
+        /// Keep the connection open and stream indefinitely. Accepted for
+        /// parity with tail-like tools; currently the default behaviour.
+        #[arg(long)]
+        follow: bool,
+
+        /// Emit each log entry as newline-delimited JSON on stdout (jsonl)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2290,6 +2302,61 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
                     }
                 },
+
+                GateCommands::Logs { follow: _, json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if dry_run {
+                        println!(
+                            "would open SSE stream {} /api/v1/logs",
+                            client.base_url()
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    let stream = match client.stream_logs().await {
+                        Ok(s) => s,
+                        Err(e) => return gate_error_exit(e, "logs_stream_failed", cli.json),
+                    };
+
+                    use futures_util::StreamExt;
+                    let mut stream = stream;
+                    let ctrl_c = tokio::signal::ctrl_c();
+                    tokio::pin!(ctrl_c);
+
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = &mut ctrl_c => {
+                                if !want_json {
+                                    eprintln!("\nlog stream closed");
+                                }
+                                return Ok(exit_code::SUCCESS);
+                            }
+                            next = stream.next() => {
+                                match next {
+                                    Some(Ok(entry)) => {
+                                        if want_json {
+                                            println!("{}", serde_json::to_string(&entry)?);
+                                        } else {
+                                            println!(
+                                                "{} {:<5} {}",
+                                                entry.timestamp, entry.level, entry.message
+                                            );
+                                        }
+                                    }
+                                    Some(Err(e)) => {
+                                        return gate_error_exit(e, "logs_stream_failed", cli.json);
+                                    }
+                                    None => {
+                                        // Server closed the stream.
+                                        return Ok(exit_code::SUCCESS);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 GateCommands::Test {
                     model,

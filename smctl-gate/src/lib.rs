@@ -111,6 +111,15 @@ pub struct Route {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub message: String,
+    #[serde(default)]
+    pub fields: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceResult {
     pub model: String,
     pub output: serde_json::Value,
@@ -295,6 +304,43 @@ impl GateClient {
         parse_json(resp).await
     }
 
+    /// Open an SSE connection to the log stream at
+    /// `GET /api/v1/logs`. The returned stream yields `LogEntry` values
+    /// parsed from SSE `data:` events. Caller is responsible for
+    /// dropping the stream to close the connection.
+    pub async fn stream_logs(
+        &self,
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = Result<LogEntry, GateError>> + Send>,
+        >,
+        GateError,
+    > {
+        let url = format!("{}/api/v1/logs", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(GateError::HttpError {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        let byte_stream = resp.bytes_stream().map(|r| {
+            r.map_err(|source| GateError::Transport { source })
+        });
+
+        Ok(Box::pin(sse_log_stream(byte_stream)))
+    }
+
     /// Run a test inference against `model` with a JSON payload loaded
     /// from `input`.
     pub async fn test_inference(
@@ -403,6 +449,58 @@ fn urlencoding_path(segment: &str) -> String {
         }
     }
     out
+}
+
+/// Parse an SSE byte stream into `LogEntry` values.
+///
+/// Implements the minimum of the SSE grammar relevant to this use case:
+/// lines are separated by `\n` (with optional `\r`), events are
+/// terminated by a blank line, and `data:` field values are concatenated
+/// with `\n` between them. All other SSE fields (`event:`, `id:`,
+/// `retry:`, comments starting with `:`) are ignored.
+fn sse_log_stream<S>(
+    byte_stream: S,
+) -> impl futures_util::Stream<Item = Result<LogEntry, GateError>> + Send
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, GateError>> + Send + 'static,
+{
+    async_stream::stream! {
+        let mut byte_stream = Box::pin(byte_stream);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut data_lines: Vec<String> = Vec::new();
+
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = match chunk {
+                Ok(b) => b,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            };
+            buf.extend_from_slice(&chunk);
+
+            // Drain complete lines from the buffer.
+            while let Some(nl) = buf.iter().position(|b| *b == b'\n') {
+                let line_bytes: Vec<u8> = buf.drain(..=nl).collect();
+                let line_str = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
+                let line = line_str.trim_end_matches('\r');
+
+                if line.is_empty() {
+                    if !data_lines.is_empty() {
+                        let combined = data_lines.join("\n");
+                        data_lines.clear();
+                        match serde_json::from_str::<LogEntry>(&combined) {
+                            Ok(entry) => yield Ok(entry),
+                            Err(source) => yield Err(GateError::ParseError { source }),
+                        }
+                    }
+                } else if let Some(rest) = line.strip_prefix("data:") {
+                    data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+                }
+                // other SSE fields are ignored
+            }
+        }
+    }
 }
 
 #[cfg(test)]
