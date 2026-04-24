@@ -14,9 +14,13 @@
 //! Remaining verbs (models, routes, test, logs) are scaffolded in tasks.md
 //! and land in follow-up commits on this branch.
 
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio_util::io::ReaderStream;
 
 pub const DEFAULT_URL: &str = "http://localhost:8080";
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -61,6 +65,19 @@ pub enum GateError {
 
     #[error("invalid endpoint URL: {url}")]
     InvalidUrl { url: String },
+
+    #[error("model not found: {name}")]
+    ModelNotFound { name: String },
+
+    #[error("file not found: {path}")]
+    FileNotFound { path: String },
+
+    #[error("I/O error reading {path}: {source}")]
+    Io {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl GateError {
@@ -82,6 +99,23 @@ pub struct HealthStatus {
     pub uptime_secs: u64,
     pub model_count: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Model {
+    pub name: String,
+    pub format: String,
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub registered_at: String,
+    pub status: String,
+}
+
+/// Progress callback for streaming uploads.
+///
+/// Called after each chunk with `(bytes_sent_so_far, total_bytes)`.
+/// `total_bytes` is `None` when the source has no known length (rare;
+/// file uploads always report a length).
+pub type ProgressCallback = Arc<dyn Fn(u64, Option<u64>) + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct GateClient {
@@ -123,22 +157,153 @@ impl GateClient {
             .send()
             .await
             .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+        parse_json(resp).await
+    }
+
+    pub async fn list_models(&self) -> Result<Vec<Model>, GateError> {
+        let url = format!("{}/api/v1/models", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+        parse_json(resp).await
+    }
+
+    /// Register a model by streaming the file at `path` to the gateway.
+    ///
+    /// The model name is derived from the file stem. `progress`, if set,
+    /// is invoked after each chunk with `(bytes_sent, total_bytes)`.
+    pub async fn add_model(
+        &self,
+        path: &Path,
+        progress: Option<ProgressCallback>,
+    ) -> Result<Model, GateError> {
+        let file = tokio::fs::File::open(path).await.map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                GateError::FileNotFound {
+                    path: path.display().to_string(),
+                }
+            } else {
+                GateError::Io {
+                    path: path.display().to_string(),
+                    source,
+                }
+            }
+        })?;
+        let total = file.metadata().await.ok().map(|m| m.len());
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| GateError::FileNotFound {
+                path: path.display().to_string(),
+            })?
+            .to_string();
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&name)
+            .to_string();
+
+        let stream = ReaderStream::new(file);
+        let mut sent: u64 = 0;
+        let tracked = stream.map(move |chunk| {
+            if let Ok(ref bytes) = chunk {
+                sent += bytes.len() as u64;
+                if let Some(cb) = &progress {
+                    cb(sent, total);
+                }
+            }
+            chunk
+        });
+
+        let body = reqwest::Body::wrap_stream(tracked);
+        let part = match total {
+            Some(t) => reqwest::multipart::Part::stream_with_length(body, t),
+            None => reqwest::multipart::Part::stream(body),
+        }
+        .file_name(filename);
+
+        let form = reqwest::multipart::Form::new()
+            .text("name", name.clone())
+            .part("file", part);
+
+        let url = format!("{}/api/v1/models", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+        parse_json(resp).await
+    }
+
+    pub async fn remove_model(&self, name: &str) -> Result<(), GateError> {
+        let url = format!(
+            "{}/api/v1/models/{}",
+            self.base_url,
+            urlencoding_path(name)
+        );
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
 
         let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(GateError::HttpError {
-                status: status.as_u16(),
-                body,
+        if status.is_success() {
+            return Ok(());
+        }
+        if status.as_u16() == 404 {
+            return Err(GateError::ModelNotFound {
+                name: name.to_string(),
             });
         }
-
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|source| GateError::Transport { source })?;
-        serde_json::from_slice(&bytes).map_err(|source| GateError::ParseError { source })
+        let body = resp.text().await.unwrap_or_default();
+        Err(GateError::HttpError {
+            status: status.as_u16(),
+            body,
+        })
     }
+}
+
+async fn parse_json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, GateError> {
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(GateError::HttpError {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|source| GateError::Transport { source })?;
+    serde_json::from_slice(&bytes).map_err(|source| GateError::ParseError { source })
+}
+
+/// Minimal path-segment percent-encoding — enough for model names that may
+/// contain `/`, spaces, or other URL-reserved characters. We deliberately
+/// avoid pulling in `urlencoding` or `percent-encoding` for the few
+/// characters that matter in a model name.
+fn urlencoding_path(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    for b in segment.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

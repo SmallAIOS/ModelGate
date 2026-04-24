@@ -22,12 +22,12 @@
 
 ## Model Management
 
-- [ ] Implement `GET /api/v1/models` — list models
-- [ ] Implement `POST /api/v1/models` — register model (with file streaming)
-- [ ] Implement `DELETE /api/v1/models/{name}` — remove model
-- [ ] Implement `smctl gate models list` CLI subcommand
-- [ ] Implement `smctl gate models add <path>` CLI subcommand with progress bar
-- [ ] Implement `smctl gate models remove <name>` CLI subcommand
+- [x] Implement `GET /api/v1/models` — list models
+- [x] Implement `POST /api/v1/models` — register model (with file streaming)
+- [x] Implement `DELETE /api/v1/models/{name}` — remove model
+- [x] Implement `smctl gate models list` CLI subcommand
+- [x] Implement `smctl gate models add <path>` CLI subcommand with progress bar
+- [x] Implement `smctl gate models remove <name>` CLI subcommand
 
 ## Route Configuration
 
@@ -52,7 +52,7 @@
 
 - [x] Set up `wiremock` mock ModelGate server
 - [x] Test `gate status` against mock server
-- [ ] Test `gate models list/add/remove` against mock server
+- [x] Test `gate models list/add/remove` against mock server
 - [ ] Test `gate routes list/set` against mock server
 - [ ] Test `gate test` inference round-trip against mock server
 - [ ] Test error handling (connection refused, 404, 500 responses) — 5xx + connection refused covered; 404 pending models endpoint

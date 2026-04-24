@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -440,6 +441,42 @@ enum GateCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Manage registered models (list, add, remove)
+    Models {
+        #[command(subcommand)]
+        command: GateModelsCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateModelsCommands {
+    /// List all registered models
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Register a new model from a local file
+    Add {
+        /// Path to the model file (.onnx, .gguf, ...)
+        path: PathBuf,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Unregister a model by name
+    Remove {
+        /// Model name
+        name: String,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
@@ -493,6 +530,61 @@ impl Cli {
 fn is_stdout_tty() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i + 1 < UNITS.len() {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} {}", UNITS[0])
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
+}
+
+/// Render a `GateError` to stdout (JSON) or stderr (human + remediation)
+/// and return the conventional general-error exit code.
+fn gate_error_exit(
+    err: smctl_gate::GateError,
+    error_kind: &str,
+    global_json: bool,
+) -> Result<i32> {
+    let want_json = global_json || !is_stdout_tty();
+    let msg = format!("{err}");
+    if want_json {
+        let payload = serde_json::json!({
+            "error": error_kind,
+            "message": msg,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        eprintln!("error: {msg}");
+        let hint = match err {
+            smctl_gate::GateError::ConnectionRefused { .. } => {
+                "start ModelGate and retry, or point smctl at a reachable instance with --url or MODELGATE_URL"
+            }
+            smctl_gate::GateError::Timeout { .. } => {
+                "raise --timeout, or check that ModelGate is responsive"
+            }
+            smctl_gate::GateError::ModelNotFound { .. } => {
+                "run `smctl gate models list` to see registered models"
+            }
+            smctl_gate::GateError::FileNotFound { .. } => {
+                "check the path is correct and the file is readable, then re-run"
+            }
+            smctl_gate::GateError::HttpError { .. } => {
+                "inspect the ModelGate logs for the failing request"
+            }
+            _ => "re-run with -v for more detail",
+        };
+        eprintln!("remediation: {hint}");
+    }
+    Ok(exit_code::GENERAL_ERROR)
 }
 
 fn init_tracing(cli: &Cli) -> Result<()> {
@@ -1889,29 +1981,30 @@ async fn run(cli: Cli) -> Result<i32> {
                 timeout_secs: timeout,
             };
 
+            let client = match smctl_gate::GateClient::new(cfg.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    let want_json = cli.json || !is_stdout_tty();
+                    let msg = format!("{e}");
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "invalid_config",
+                            "message": msg,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                        eprintln!(
+                            "remediation: pass --url http://<host>:<port> or set MODELGATE_URL to a valid URL"
+                        );
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+            };
+
             match command {
                 GateCommands::Status { json } => {
                     let want_json = json || cli.json || !is_stdout_tty();
-
-                    let client = match smctl_gate::GateClient::new(cfg.clone()) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let msg = format!("{e}");
-                            if want_json {
-                                let err = serde_json::json!({
-                                    "error": "invalid_config",
-                                    "message": msg,
-                                });
-                                println!("{}", serde_json::to_string_pretty(&err)?);
-                            } else {
-                                eprintln!("error: {msg}");
-                                eprintln!(
-                                    "remediation: pass --url http://<host>:<port> or set MODELGATE_URL to a valid URL"
-                                );
-                            }
-                            return Ok(exit_code::GENERAL_ERROR);
-                        }
-                    };
 
                     if dry_run {
                         println!("would query {} for /health", client.base_url());
@@ -1932,24 +2025,165 @@ async fn run(cli: Cli) -> Result<i32> {
                             }
                             Ok(exit_code::SUCCESS)
                         }
-                        Err(e) => {
-                            let msg = format!("{e}");
+                        Err(e) => gate_error_exit(e, "gate_unreachable", cli.json),
+                    }
+                }
+
+                GateCommands::Models { command } => match command {
+                    GateModelsCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/models", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_models().await {
+                            Ok(models) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&models)?);
+                                } else if models.is_empty() {
+                                    println!("no models registered");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<8} {:<12} {:<10} REGISTERED",
+                                        "NAME", "FORMAT", "SIZE", "STATUS"
+                                    );
+                                    for m in &models {
+                                        println!(
+                                            "{:<22} {:<8} {:<12} {:<10} {}",
+                                            m.name,
+                                            m.format,
+                                            human_bytes(m.size_bytes),
+                                            m.status,
+                                            m.registered_at
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_list_failed", cli.json),
+                        }
+                    }
+
+                    GateModelsCommands::Add { path, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if !path.exists() {
+                            let msg =
+                                format!("file not found: {}", path.display());
                             if want_json {
                                 let err = serde_json::json!({
-                                    "error": "gate_unreachable",
+                                    "error": "file_not_found",
                                     "message": msg,
                                 });
                                 println!("{}", serde_json::to_string_pretty(&err)?);
                             } else {
                                 eprintln!("error: {msg}");
                                 eprintln!(
-                                    "remediation: start ModelGate and retry, or point smctl at a reachable instance with --url or MODELGATE_URL"
+                                    "remediation: check the path is correct and the file is readable, then re-run"
                                 );
                             }
-                            Ok(exit_code::GENERAL_ERROR)
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+
+                        if dry_run {
+                            let size =
+                                std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            let name = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("model");
+                            println!(
+                                "would upload {} ({}) and register as '{}'",
+                                path.display(),
+                                human_bytes(size),
+                                name
+                            );
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        // Progress is printed to stderr so --json stdout stays
+                        // a pure machine-readable channel.
+                        let progress: Option<smctl_gate::ProgressCallback> = if want_json {
+                            None
+                        } else {
+                            use std::sync::Mutex;
+                            let last: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+                            let last_for_cb = last.clone();
+                            Some(Arc::new(move |sent: u64, total: Option<u64>| {
+                                let mut last_guard = last_for_cb.lock().unwrap();
+                                // Throttle updates to once per ~1% so large uploads
+                                // don't spam the terminal.
+                                let step =
+                                    total.map(|t| (t / 100).max(1)).unwrap_or(256 * 1024);
+                                if sent - *last_guard >= step || Some(sent) == total {
+                                    *last_guard = sent;
+                                    match total {
+                                        Some(t) => eprint!(
+                                            "\ruploading: {} / {} ({:.0}%)",
+                                            human_bytes(sent),
+                                            human_bytes(t),
+                                            (sent as f64 / t as f64) * 100.0
+                                        ),
+                                        None => eprint!("\ruploading: {}", human_bytes(sent)),
+                                    }
+                                    use std::io::Write;
+                                    let _ = std::io::stderr().flush();
+                                }
+                            }))
+                        };
+
+                        match client.add_model(&path, progress).await {
+                            Ok(model) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&model)?);
+                                } else {
+                                    println!(
+                                        "model '{}' registered ({}, status={})",
+                                        model.name,
+                                        human_bytes(model.size_bytes),
+                                        model.status
+                                    );
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                gate_error_exit(e, "models_add_failed", cli.json)
+                            }
                         }
                     }
-                }
+
+                    GateModelsCommands::Remove { name, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would unregister model '{name}'");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.remove_model(&name).await {
+                            Ok(()) => {
+                                if want_json {
+                                    let ok = serde_json::json!({
+                                        "removed": name,
+                                    });
+                                    println!("{}", serde_json::to_string_pretty(&ok)?);
+                                } else {
+                                    println!("model '{name}' removed");
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_remove_failed", cli.json),
+                        }
+                    }
+                },
             }
         }
 
