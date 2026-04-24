@@ -38,9 +38,9 @@
 
 ## Inference Testing
 
-- [ ] Implement `POST /api/v1/inference/{model}` — test inference
-- [ ] Implement `smctl gate test <model> --input <file>` CLI subcommand
-- [ ] Display inference result, latency, and model metadata
+- [x] Implement `POST /api/v1/inference/{model}` — test inference
+- [x] Implement `smctl gate test <model> --input <file>` CLI subcommand
+- [x] Display inference result, latency, and model metadata
 
 ## Log Streaming
 
@@ -54,7 +54,7 @@
 - [x] Test `gate status` against mock server
 - [x] Test `gate models list/add/remove` against mock server
 - [x] Test `gate routes list/set` against mock server
-- [ ] Test `gate test` inference round-trip against mock server
+- [x] Test `gate test` inference round-trip against mock server
 - [ ] Test error handling (connection refused, 404, 500 responses) — 5xx + connection refused covered; 404 pending models endpoint
 - [ ] Test timeout and retry behavior
 

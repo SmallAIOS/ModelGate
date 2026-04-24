@@ -110,6 +110,15 @@ pub struct Route {
     pub request_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceResult {
+    pub model: String,
+    pub output: serde_json::Value,
+    pub latency_ms: u64,
+    #[serde(default)]
+    pub tokens_generated: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Model {
     pub name: String,
@@ -277,6 +286,51 @@ impl GateClient {
             .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
 
         // A 404 on PUT /api/v1/routes means the target model is unknown.
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Err(GateError::ModelNotFound {
+                name: model.to_string(),
+            });
+        }
+        parse_json(resp).await
+    }
+
+    /// Run a test inference against `model` with a JSON payload loaded
+    /// from `input`.
+    pub async fn test_inference(
+        &self,
+        model: &str,
+        input: &Path,
+    ) -> Result<InferenceResult, GateError> {
+        let bytes = tokio::fs::read(input).await.map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                GateError::FileNotFound {
+                    path: input.display().to_string(),
+                }
+            } else {
+                GateError::Io {
+                    path: input.display().to_string(),
+                    source,
+                }
+            }
+        })?;
+
+        let payload: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|source| GateError::ParseError { source })?;
+
+        let url = format!(
+            "{}/api/v1/inference/{}",
+            self.base_url,
+            urlencoding_path(model)
+        );
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| GateError::from_reqwest(e, &self.base_url, self.timeout_secs))?;
+
         let status = resp.status();
         if status.as_u16() == 404 {
             return Err(GateError::ModelNotFound {

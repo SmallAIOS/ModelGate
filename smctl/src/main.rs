@@ -453,6 +453,20 @@ enum GateCommands {
         #[command(subcommand)]
         command: GateRoutesCommands,
     },
+
+    /// Run a test inference against a registered model
+    Test {
+        /// Model name
+        model: String,
+
+        /// Path to a JSON file containing the inference input
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Emit the raw InferenceResult JSON on stdout
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2276,6 +2290,61 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
                     }
                 },
+
+                GateCommands::Test {
+                    model,
+                    input,
+                    json,
+                } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if !input.exists() {
+                        let msg = format!("input file not found: {}", input.display());
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "file_not_found",
+                                "message": msg,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {msg}");
+                            eprintln!(
+                                "remediation: check the path is correct and the file is readable, then re-run"
+                            );
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+
+                    if dry_run {
+                        println!(
+                            "would POST {} -> /api/v1/inference/{}",
+                            input.display(),
+                            model
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.test_inference(&model, &input).await {
+                        Ok(result) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&result)?);
+                            } else {
+                                println!("inference result:");
+                                println!("  model:    {}", result.model);
+                                println!("  latency:  {}ms", result.latency_ms);
+                                if let Some(t) = result.tokens_generated {
+                                    println!("  tokens:   {t}");
+                                }
+                                println!(
+                                    "  output:   {}",
+                                    serde_json::to_string(&result.output)?
+                                );
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => gate_error_exit(e, "inference_failed", cli.json),
+                    }
+                }
             }
         }
 
