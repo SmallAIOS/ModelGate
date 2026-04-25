@@ -48,7 +48,7 @@ jobs:
         with:
           files: ui/modelgate-web/coverage/lcov.info
           flags: frontend
-          # Public-repo OIDC upload — no token required.
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
       - name: Build
         working-directory: ui/modelgate-web
@@ -99,6 +99,7 @@ jobs:
         with:
           files: coverage-rust.info
           flags: rust
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   build:
