@@ -10,6 +10,7 @@ members = [
     "smctl-quality",
     "smctl-gate",
     "modelgate-web",
+    "smctl-verify",
 ]
 resolver = "3"
 

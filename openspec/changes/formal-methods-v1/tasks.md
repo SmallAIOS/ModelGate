@@ -2,10 +2,10 @@
 
 ## 1. Crate Setup
 
-- [ ] 1.1 Create `smctl-verify/` crate with `Cargo.toml` (cedar-policy, smctl-log, smctl-workspace deps)
-- [ ] 1.2 Add `smctl-verify` as a workspace member in root `Cargo.toml`
-- [ ] 1.3 Add `smctl-verify` dep to `smctl/Cargo.toml`
-- [ ] 1.4 `cargo build --workspace` passes with the new empty crate
+- [x] 1.1 Create `smctl-verify/` crate with `Cargo.toml` (cedar-policy 4.x, smctl-log, smctl-workspace deps)
+- [x] 1.2 Add `smctl-verify` as a workspace member in root `Cargo.toml`
+- [x] 1.3 Add `smctl-verify` dep to `smctl/Cargo.toml`
+- [x] 1.4 `cargo build --workspace` passes with the new empty crate
 
 ## 2. Verifier Trait + Registry
 
