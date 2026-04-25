@@ -1,0 +1,59 @@
+# Codecov configuration. Validate via:
+#   curl -X POST --data-binary @codecov.yml https://codecov.io/validate
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    # Project-wide gate. We're at alpha, so the floor is generous;
+    # tighten this once core paths grow real test coverage.
+    project:
+      default:
+        target: auto          # never drop coverage by more than `threshold`
+        threshold: 1%
+        informational: false
+    # Per-PR gate on the diff itself. Anything new should at least be
+    # exercised somewhere; this is the bar that keeps the trend pointed
+    # the right way without blocking pure-rename or doc PRs.
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        informational: false
+
+# Two independent components that report under separate flags so
+# Codecov shows a per-stack score.
+flags:
+  rust:
+    paths:
+      - smctl/
+      - smctl-workspace/
+      - smctl-flow/
+      - smctl-spec/
+      - smctl-build/
+      - smctl-log/
+      - smctl-mcp/
+      - smctl-quality/
+      - smctl-gate/
+      - modelgate-web/
+    carryforward: true
+  frontend:
+    paths:
+      - ui/modelgate-web/src/
+    carryforward: true
+
+# Ignore generated and design-reference files; they would skew the
+# numbers in either direction.
+ignore:
+  - "ui/ui_kits/"               # designer reference, not production
+  - "**/*.md"
+  - "**/build.rs"
+  - "ui/modelgate-web/dist/"
+  - "openspec/"
+
+comment:
+  layout: "header, diff, files, footer"
+  behavior: default
+  require_changes: false        # always post; helps see the trend on chore PRs too
