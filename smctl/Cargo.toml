@@ -19,6 +19,7 @@ smctl-log = { path = "../smctl-log" }
 smctl-mcp = { path = "../smctl-mcp" }
 smctl-quality = { path = "../smctl-quality" }
 smctl-gate = { path = "../smctl-gate" }
+modelgate-web = { path = "../modelgate-web" }
 
 clap.workspace = true
 clap_complete.workspace = true

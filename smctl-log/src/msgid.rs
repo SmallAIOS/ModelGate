@@ -15,6 +15,7 @@ use crate::severity::Severity;
 ///
 /// - `SMCTL-0001` .. `SMCTL-0099` — smctl core (workspace, spec, flow, build)
 /// - `SMCTL-0200` .. `SMCTL-0299` — smctl-mcp (see `smctl-mcp-v1/specs/mcp-server-impl.md`)
+/// - `SMCTL-0300` .. `SMCTL-0399` — modelgate-web (see `modelgate-web-v1/specs/web-server.md`)
 /// - `SMCTL-0400` .. `SMCTL-0499` — smctl-quality (see `safety-quality-v1/specs/quality-toolchain.md`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MsgId {
@@ -39,6 +40,12 @@ pub enum MsgId {
     McpTransportFatal,
     McpResourceRead,
     McpResourceReadFailed,
+
+    // modelgate-web (0300..0399)
+    WebServerStarted,
+    WebServerStopped,
+    WebUpstreamUnreachable,
+    WebUpstreamTimeout,
 
     // smctl-quality (0400..0499)
     QualityCheckStarted,
@@ -73,6 +80,10 @@ impl MsgId {
             MsgId::McpTransportFatal => 206,
             MsgId::McpResourceRead => 207,
             MsgId::McpResourceReadFailed => 208,
+            MsgId::WebServerStarted => 301,
+            MsgId::WebServerStopped => 302,
+            MsgId::WebUpstreamUnreachable => 303,
+            MsgId::WebUpstreamTimeout => 304,
             MsgId::QualityCheckStarted => 400,
             MsgId::QualityCheckCompleted => 401,
             MsgId::QualityCheckFailed => 402,
@@ -101,7 +112,9 @@ impl MsgId {
             MsgId::McpClientDisconnected
             | MsgId::ComplexityThresholdExceeded
             | MsgId::DependencyUnused
-            | MsgId::FerroceneIncompatibility => Severity::Warning,
+            | MsgId::FerroceneIncompatibility
+            | MsgId::WebUpstreamUnreachable
+            | MsgId::WebUpstreamTimeout => Severity::Warning,
             MsgId::UnsafeBlockFound => Severity::Notice,
             _ => Severity::Informational,
         }
@@ -251,6 +264,52 @@ mod tests {
             MsgId::McpResourceReadFailed.default_severity(),
             Severity::Error
         );
+    }
+
+    #[test]
+    fn web_codes_and_display_match_spec_catalog() {
+        assert_eq!(MsgId::WebServerStarted.code(), 301);
+        assert_eq!(MsgId::WebServerStopped.code(), 302);
+        assert_eq!(MsgId::WebUpstreamUnreachable.code(), 303);
+        assert_eq!(MsgId::WebUpstreamTimeout.code(), 304);
+        assert_eq!(MsgId::WebServerStarted.to_string(), "SMCTL-0301");
+        assert_eq!(MsgId::WebUpstreamTimeout.to_string(), "SMCTL-0304");
+    }
+
+    #[test]
+    fn web_default_severity_matches_spec() {
+        assert_eq!(
+            MsgId::WebServerStarted.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(
+            MsgId::WebServerStopped.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(
+            MsgId::WebUpstreamUnreachable.default_severity(),
+            Severity::Warning
+        );
+        assert_eq!(
+            MsgId::WebUpstreamTimeout.default_severity(),
+            Severity::Warning
+        );
+    }
+
+    #[test]
+    fn web_codes_sit_in_reserved_range() {
+        for id in [
+            MsgId::WebServerStarted,
+            MsgId::WebServerStopped,
+            MsgId::WebUpstreamUnreachable,
+            MsgId::WebUpstreamTimeout,
+        ] {
+            let code = id.code();
+            assert!(
+                (300..=399).contains(&code),
+                "web MSGID {id:?} code {code} outside reserved 300..=399"
+            );
+        }
     }
 
     #[test]

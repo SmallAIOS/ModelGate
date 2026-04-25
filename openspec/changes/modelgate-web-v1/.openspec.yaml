@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-04-24
+status: ff
+parent: smctl-gate-v1
+description: "ModelGate web dashboard — productionizes the ui/ui_kits/modelgate_web mockup into a React SPA served by a new modelgate-web crate. Every view maps 1:1 to a smctl gate subcommand."
