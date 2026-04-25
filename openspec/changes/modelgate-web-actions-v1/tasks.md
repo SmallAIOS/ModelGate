@@ -33,10 +33,10 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Routes screen
 
-- [ ] Rename the rail entry from "Policy" to "Routes" — Policy framing is gone now that there's a real form.
-- [ ] Add `Set route` button + inline form (model select + endpoint text).
-- [ ] On submit, run `useSetRoute`. Form resets on success.
-- [ ] Toast on success / failure. Routes table refetches.
+- [x] Rename the rail entry from "Policy" to "Routes" — Policy framing dropped, PolicyScreen.tsx removed (resurrect when Cedar viewer ships).
+- [x] Add `Set route` button + inline form (model select + endpoint text).
+- [x] On submit, run `useSetRoute`. Form closes on success.
+- [x] Toast on success / failure. Routes table refetches.
 
 ## Inference screen
 

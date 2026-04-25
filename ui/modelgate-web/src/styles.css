@@ -373,3 +373,36 @@
   background: var(--accent-1, var(--fg-0));
   transition: width 80ms linear;
 }
+
+/* Forms — used by RoutesScreen Set route + InferenceScreen */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-1);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+}
+.form__row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.form__row > span { color: var(--fg-1); }
+.form__row input,
+.form__row select {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 8px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+.form__row input:disabled,
+.form__row select:disabled { opacity: 0.6; }
+.form__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }

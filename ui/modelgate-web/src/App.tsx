@@ -3,17 +3,16 @@ import { useEffect, useState } from 'react';
 import { ToastProvider } from './components/Toaster';
 import { ModelsScreen } from './screens/ModelsScreen';
 import { OverviewScreen } from './screens/OverviewScreen';
-import { PolicyScreen } from './screens/PolicyScreen';
 import { RoutesScreen } from './screens/RoutesScreen';
 import { TerminalScreen } from './screens/TerminalScreen';
 
 // --- Hash router ---
 
-type Tab = 'overview' | 'models' | 'policy' | 'terminal';
+type Tab = 'overview' | 'models' | 'routes' | 'terminal';
 
 function parseTab(hash: string): Tab {
   const cleaned = hash.replace(/^#\/?/, '');
-  if (cleaned === 'models' || cleaned === 'policy' || cleaned === 'terminal') {
+  if (cleaned === 'models' || cleaned === 'routes' || cleaned === 'terminal') {
     return cleaned;
   }
   return 'overview';
@@ -44,7 +43,7 @@ function App() {
           <strong>ModelGate</strong>
         </header>
         <nav className="shell__rail">
-          {(['overview', 'models', 'policy', 'terminal'] as Tab[]).map((t) => (
+          {(['overview', 'models', 'routes', 'terminal'] as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -58,12 +57,7 @@ function App() {
         <main className="shell__main">
           {tab === 'overview' && <OverviewScreen />}
           {tab === 'models' && <ModelsScreen />}
-          {tab === 'policy' && (
-            <>
-              <PolicyScreen />
-              <RoutesScreen />
-            </>
-          )}
+          {tab === 'routes' && <RoutesScreen />}
           {tab === 'terminal' && <TerminalScreen />}
         </main>
       </div>
@@ -77,8 +71,8 @@ function labelFor(t: Tab): string {
       return 'Overview';
     case 'models':
       return 'Models';
-    case 'policy':
-      return 'Policy';
+    case 'routes':
+      return 'Routes';
     case 'terminal':
       return 'Terminal';
   }
