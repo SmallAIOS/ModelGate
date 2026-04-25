@@ -242,3 +242,110 @@
   text-rendering: optimizeLegibility;
   font-variant-numeric: tabular-nums;
 }
+
+/* === Dashboard chrome additions (modelgate-web-actions-v1) === */
+
+/* Toaster — bottom-right anchored region announced via aria-live */
+.toaster {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 360px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-1);
+  border: 1px solid var(--fg-3);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast--success { border-color: var(--ok-1); }
+.toast--error   { border-color: var(--alert-1); }
+.toast__message { font-weight: 600; }
+.toast__detail  { color: var(--fg-2); font-size: var(--fs-xs); }
+
+/* Confirm dialog */
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.dialog {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-4);
+  width: min(480px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+}
+.dialog__title { margin: 0; font-size: var(--fs-lg); }
+.dialog__body { color: var(--fg-1); font-size: var(--fs-sm); }
+.dialog__cli {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow-x: auto;
+}
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 12px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary {
+  background: var(--accent-1, var(--fg-0));
+  color: var(--bg-0);
+  border-color: var(--accent-1, var(--fg-0));
+}
+.btn--destructive {
+  background: var(--alert-1);
+  color: var(--bg-0);
+  border-color: var(--alert-1);
+}

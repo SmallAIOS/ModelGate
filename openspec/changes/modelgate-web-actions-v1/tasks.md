@@ -4,9 +4,9 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Foundation
 
-- [ ] Add `<Toaster>` + `useToast()` context to `ui/modelgate-web/src/`. Mount in `App.tsx`. Style via `styles.css`.
-- [ ] Add `<ConfirmDialog>` controlled component (focus trap, `aria-modal`, escape/backdrop close).
-- [ ] Split inline screen components out of `App.tsx` into `src/screens/{Overview,Models,Routes,Terminal}Screen.tsx`. App.tsx keeps the shell + router only.
+- [x] Add `<Toaster>` + `useToast()` context to `ui/modelgate-web/src/`. Mount in `App.tsx`. Style via `styles.css`.
+- [x] Add `<ConfirmDialog>` controlled component (focus trap via initial-focus + escape/backdrop close + `aria-modal`).
+- [x] Split inline screen components out of `App.tsx` into `src/screens/{Overview,Models,Routes,Policy,Terminal}Screen.tsx`. App.tsx keeps the shell + router only.
 
 ## API Client
 
