@@ -13,6 +13,16 @@ cargo install --path smctl
 
 Requires Rust 2024 edition (1.85+).
 
+### Pre-commit hooks (recommended)
+
+```bash
+brew install pre-commit          # if not already on PATH
+pre-commit install --install-hooks
+pre-commit install --hook-type pre-push
+```
+
+`git commit` then runs the fast set (formatter + whitespace + YAML) and `git push` runs the heavier set that mirrors CI (clippy, workspace tests, frontend typecheck and vitest). Bypass once with `--no-verify` if you genuinely know what you're doing.
+
 ## Quickstart
 
 ```bash
