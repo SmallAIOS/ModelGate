@@ -444,6 +444,47 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_build_subset_full() {
+        // None means "everything in topological order".
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, None).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_target_with_transitive_deps() {
+        // Asking for C should pull in A (B's dep) and B (C's dep) in
+        // topological order — the named repo PLUS its transitive deps.
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, Some("C")).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_leaf_repo() {
+        // Asking for A (no deps) should produce just [A]. This is the
+        // exact regression Phase 5 of the smallaios-integration-v1
+        // shakedown caught: the old dry-run path returned the full
+        // build order regardless of the filter.
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, Some("A")).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_unknown_repo() {
+        let manifest = make_manifest();
+        let err = resolve_build_subset(&manifest, Some("does-not-exist")).unwrap_err();
+        assert!(
+            err.to_string().contains("does-not-exist"),
+            "error should cite the missing repo: {err}"
+        );
+    }
+
+    #[test]
     fn test_resolve_build_levels() {
         let manifest = make_manifest();
         let levels = resolve_build_levels(&manifest).unwrap();
