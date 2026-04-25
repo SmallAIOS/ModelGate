@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "modelgate-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -2267,7 +2267,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "smctl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-build"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2310,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-flow"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "git2",
@@ -2324,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-gate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "bytes",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-log"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gethostname",
  "syslog",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-quality"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-spec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "smctl-workspace"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "git2",
