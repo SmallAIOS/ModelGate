@@ -15,6 +15,7 @@ smctl-workspace = { path = "../smctl-workspace" }
 # core (per design.md). We pin the major version; minor bumps are
 # safe per Cedar's semver policy.
 cedar-policy = "4"
+glob = "0.3"
 
 serde.workspace = true
 serde_json.workspace = true

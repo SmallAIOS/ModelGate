@@ -17,12 +17,12 @@
 
 ## 3. Cedar end-to-end (the headline integration)
 
-- [ ] 3.1 Implement `cedar::CedarVerifier` using the `cedar-policy` Rust SDK
-- [ ] 3.2 Discovery: always `Found` (Rust dep, no PATH lookup)
-- [ ] 3.3 Glob `[verify.policy] sources` against each registered repo
-- [ ] 3.4 Parse each policy file, run `Validator::validate` and `PolicySet::is_valid`
-- [ ] 3.5 Map each diagnostic to a three-part remediation message
-- [ ] 3.6 Unit tests with fixture policies (well-formed, syntax-error, schema-mismatch)
+- [x] 3.1 Implement `cedar::CedarVerifier` using the `cedar-policy` Rust SDK
+- [x] 3.2 Discovery: always `Found` (Rust dep, no PATH lookup)
+- [x] 3.3 Glob `[verify.policy] sources` against each registered repo via the `glob` crate; per-repo absolute resolution
+- [x] 3.4 Parse each policy file with `PolicySet::from_str`. Schema-aware `Validator::validate` is deferred (needs per-repo schema discovery convention) — noted in the cedar.rs module doc.
+- [x] 3.5 Three-part remediation on every failure path (read error, UTF-8 error, parse error, empty-policy-set, glob error)
+- [x] 3.6 Six unit tests with fixture policies — well-formed, complex (RBAC + condition), malformed (syntax error), empty (comment only), missing files, sources-empty manifest
 
 ## 4. Shell-out runners (TLA+, Lean, SPIN)
 

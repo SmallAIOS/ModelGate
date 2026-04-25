@@ -14,8 +14,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub mod cedar;
 pub mod registry;
 
+pub use cedar::CedarVerifier;
 pub use registry::Registry;
 
 // --- Trait ---
