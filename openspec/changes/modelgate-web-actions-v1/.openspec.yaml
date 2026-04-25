@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-04-25
+status: ff
+parent: modelgate-web-v1
+description: "Make the ModelGate dashboard actionable — register models, remove models, set routes, run test inferences from the browser. The Rust /api/* surface is already wired; this change adds the frontend components and confirmation flows that exercise it."
