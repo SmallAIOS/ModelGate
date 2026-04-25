@@ -160,6 +160,22 @@ transports = ["stderr"]       # any of "stderr", "file", "syslog"
 file = "/var/log/smctl.log"   # only used when "file" is in transports
 facility = "local0"           # local0..local7 or daemon
 level = "info"                # error / warn / info / debug / trace
+
+[verify.policy]
+sources = ["security/policies/*.cedar"]   # globs relative to each repo
+fail_on = "any"                            # "any" or "error"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]               # TLA+ specs (`tlc` runner)
+fail_on = "any"
+
+[verify.proof]
+roots = ["formal/lean"]                    # Lean 4 project roots (`lake build`)
+fail_on = "any"
+
+[verify.protocol]
+specs = ["formal/spin/*.pml"]              # SPIN/Promela specs (`spin -a`)
+fail_on = "any"
 ```
 
 ## Architecture

@@ -2120,18 +2120,18 @@ async fn run(cli: Cli) -> Result<i32> {
             strict,
             command,
         } => {
-            // Build a VerifyContext from the workspace, even though §6
-            // hasn't filled in the [verify] manifest section yet —
-            // that lands in the next commit. For now, the manifest is
-            // always default (empty sources), so each subcommand
-            // reports `no sources configured` cleanly.
             let workspace_root =
                 resolve_root().unwrap_or_else(|_| std::env::current_dir().unwrap());
+            let workspace_manifest =
+                smctl_workspace::WorkspaceManifest::load_from_root(&workspace_root).ok();
+
+            // Build the per-repo path map. With a workspace.toml, walk
+            // [[repos]]; without, fall back to a single anonymous "."
+            // entry rooted at the cwd so `smctl verify` is at least
+            // useful in repo-local invocations.
             let repos: std::collections::BTreeMap<String, std::path::PathBuf> =
-                if let Ok(manifest) =
-                    smctl_workspace::WorkspaceManifest::load_from_root(&workspace_root)
-                {
-                    manifest
+                match workspace_manifest.as_ref() {
+                    Some(m) => m
                         .repos
                         .iter()
                         .map(|r| {
@@ -2142,22 +2142,67 @@ async fn run(cli: Cli) -> Result<i32> {
                                 .unwrap_or_else(|| workspace_root.join(&r.name));
                             (r.name.clone(), path)
                         })
-                        .collect()
-                } else {
-                    // No workspace.toml — treat the cwd as a single
-                    // anonymous repo so `smctl verify` is at least
-                    // useful in repo-local invocations.
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert(".".into(), workspace_root.clone());
-                    m
+                        .collect(),
+                    None => {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert(".".into(), workspace_root.clone());
+                        m
+                    }
                 };
-            let ctx = smctl_verify::VerifyContext {
+
+            // Per-verb [verify.<X>] subsection -> VerifyManifest. Each
+            // subverb pulls only its own slice; if the manifest is
+            // absent the verifier reports "no sources configured".
+            let manifest_for = |verb: &str| -> smctl_verify::VerifyManifest {
+                let Some(verify) = workspace_manifest.as_ref().and_then(|m| m.verify.as_ref())
+                else {
+                    return smctl_verify::VerifyManifest::default();
+                };
+                match verb {
+                    "policy" => verify
+                        .policy
+                        .as_ref()
+                        .map(|p| smctl_verify::VerifyManifest {
+                            sources: p.sources.clone(),
+                            fail_on: p.fail_on.clone(),
+                        })
+                        .unwrap_or_default(),
+                    "model" => verify
+                        .model
+                        .as_ref()
+                        .map(|m| smctl_verify::VerifyManifest {
+                            sources: m.specs.clone(),
+                            fail_on: m.fail_on.clone(),
+                        })
+                        .unwrap_or_default(),
+                    "proof" => verify
+                        .proof
+                        .as_ref()
+                        .map(|p| smctl_verify::VerifyManifest {
+                            sources: p.roots.clone(),
+                            fail_on: p.fail_on.clone(),
+                        })
+                        .unwrap_or_default(),
+                    "protocol" => verify
+                        .protocol
+                        .as_ref()
+                        .map(|p| smctl_verify::VerifyManifest {
+                            sources: p.specs.clone(),
+                            fail_on: p.fail_on.clone(),
+                        })
+                        .unwrap_or_default(),
+                    _ => smctl_verify::VerifyManifest::default(),
+                }
+            };
+
+            let make_ctx = |verb: &str| smctl_verify::VerifyContext {
                 workspace_root: workspace_root.clone(),
-                repos,
-                manifest: smctl_verify::VerifyManifest::default(),
+                repos: repos.clone(),
+                manifest: manifest_for(verb),
                 strict,
                 verifier_filter: verifier_filter.clone(),
             };
+
             let registry = smctl_verify::Registry::with_default_verifiers();
 
             match command {
@@ -2237,6 +2282,8 @@ async fn run(cli: Cli) -> Result<i32> {
                             return Ok(exit_code::GENERAL_ERROR);
                         }
                     };
+
+                    let ctx = make_ctx(subcommand_name);
 
                     if dry_run {
                         println!(

@@ -43,10 +43,12 @@
 
 ## 6. Workspace.toml [verify] section
 
-- [ ] 6.1 Add `VerifyManifestSection` to `smctl-workspace/src/lib.rs`
-- [ ] 6.2 `[verify.policy] / [verify.model] / [verify.proof] / [verify.protocol]` subsections (all optional, `deny_unknown_fields`)
-- [ ] 6.3 Tests: parses, absent-is-None, rejects unknown subsection
-- [ ] 6.4 Update README with the section schema
+- [x] 6.1 `VerifyManifestSection` + four subsection structs added to `smctl-workspace/src/lib.rs`
+- [x] 6.2 `[verify.policy] / [verify.model] / [verify.proof] / [verify.protocol]` — each `deny_unknown_fields`, each independently optional. Field name per domain: `sources` / `specs` / `roots` / `specs`.
+- [x] 6.3 Six new tests: all subsections parse, absent-is-None, single-subsection-others-default-to-None, rejects unknown subsection, rejects unknown field within subsection, default `fail_on` is `"any"`
+- [x] 6.4 README workspace.toml reference gains four `[verify.<domain>]` blocks
+
+CLI dispatch in §5 now consults `manifest.verify.<verb>` to populate the per-call `VerifyManifest`. Policy / Model / Proof / Protocol each pull from their own subsection and fall back to default (empty sources, "any" fail_on) when the subsection is absent.
 
 ## 7. Logging MSGIDs
 
