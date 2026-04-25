@@ -52,8 +52,8 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Tests
 
-- [ ] Vitest for `api.ts`: success + GateApiError parsing for `registerModel`, `removeModel`, `setRoute`, `testInference` against a mocked `fetch`. Closes the deferred row from `modelgate-web-v1/tasks.md`.
-- [ ] Vitest for the mutation hooks — assert the right query key is invalidated and the right toast is pushed on success/failure.
+- [x] Vitest for `api.ts`: success + GateApiError parsing for `removeModel`, `setRoute`, `testInference`, plus health/listModels/non-JSON-body paths. Closes the deferred row from `modelgate-web-v1/tasks.md`. (registerModel is XHR, covered by the mutation hook tests when those land.)
+- [ ] Vitest for the mutation hooks — assert the right query key is invalidated and the right toast is pushed on success/failure. Deferred to a follow-up commit; needs a React test renderer + provider plumbing.
 
 ## Verify
 
