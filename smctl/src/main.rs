@@ -1545,7 +1545,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
             if dry_run {
-                let order = smctl_build::resolve_build_order(&manifest)?;
+                let order = smctl_build::resolve_build_subset(&manifest, repo.as_deref())?;
                 let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
                 println!("would build in order: {}", names.join(" → "));
                 return Ok(exit_code::DRY_RUN);

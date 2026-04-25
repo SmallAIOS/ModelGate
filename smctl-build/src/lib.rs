@@ -24,6 +24,33 @@ pub struct BuildReport {
     pub all_passed: bool,
 }
 
+/// Resolve the set of repos to build for a single-repo selection,
+/// in topological order.
+///
+/// When `repo_name` is `None` this is the same as
+/// [`resolve_build_order`]. When set, the result is the named repo
+/// plus its transitive dependencies, in the same topological order
+/// the full graph would produce.
+pub fn resolve_build_subset<'a>(
+    manifest: &'a WorkspaceManifest,
+    repo_name: Option<&str>,
+) -> Result<Vec<&'a RepoConfig>> {
+    let order = resolve_build_order(manifest)?;
+    let Some(name) = repo_name else {
+        return Ok(order);
+    };
+    manifest.find_repo(name).with_context(|| {
+        format!(
+            "repo '{name}' not found. It is not registered in the workspace manifest, so smctl cannot plan the build. Run `smctl workspace status` to see registered repos, or add it with `smctl workspace add <url> --name {name}`."
+        )
+    })?;
+    let deps = collect_deps(manifest, name);
+    Ok(order
+        .into_iter()
+        .filter(|r| r.name == name || deps.contains(&r.name))
+        .collect())
+}
+
 /// Resolve build order from dependency graph (topological sort).
 pub fn resolve_build_order(manifest: &WorkspaceManifest) -> Result<Vec<&RepoConfig>> {
     let repos = &manifest.repos;
@@ -134,25 +161,7 @@ fn build_inner(
         return build_parallel_impl(root, manifest, repo_name, run_tests, clean_first, start);
     }
 
-    let build_order = resolve_build_order(manifest)?;
-
-    let repos_to_build: Vec<_> = match repo_name {
-        Some(name) => {
-            let _target = manifest
-                .find_repo(name)
-                .with_context(|| {
-                    format!(
-                        "repo '{name}' not found. It is not registered in the workspace manifest, so smctl cannot plan the build. Run `smctl workspace status` to see registered repos, or add it with `smctl workspace add <url> --name {name}`."
-                    )
-                })?;
-            let deps = collect_deps(manifest, name);
-            build_order
-                .into_iter()
-                .filter(|r| r.name == name || deps.contains(&r.name))
-                .collect()
-        }
-        None => build_order,
-    };
+    let repos_to_build = resolve_build_subset(manifest, repo_name)?;
 
     let mut results = Vec::new();
     for repo in &repos_to_build {
