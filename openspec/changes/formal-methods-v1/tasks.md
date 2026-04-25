@@ -9,11 +9,11 @@
 
 ## 2. Verifier Trait + Registry
 
-- [ ] 2.1 Define `Verifier` trait: `fn name(&self) -> &str`, `fn discover(&self) -> DiscoveryResult`, `fn run(&self, ctx: &VerifyContext) -> VerifyReport`
-- [ ] 2.2 Define `VerifyContext` (workspace root, repo paths, manifest section, `--strict` flag, `--verifier` filter)
-- [ ] 2.3 Define `VerifyReport` (verifier name, per-source pass/fail rows, overall outcome, diagnostics)
-- [ ] 2.4 Define `DiscoveryResult { Found { path, version }, NotInstalled }`
-- [ ] 2.5 Build a registry that owns one boxed `Verifier` per supported tool
+- [x] 2.1 Define `Verifier` trait: `fn name(&self) -> &'static str`, `fn discover(&self) -> DiscoveryResult`, `fn run(&self, ctx: &VerifyContext) -> VerifyReport` (Send + Sync bound for future concurrent dispatch)
+- [x] 2.2 Define `VerifyContext` (workspace root, repo paths, manifest, `--strict` flag, `--verifier` filter) — owned data, no lifetimes
+- [x] 2.3 Define `VerifyReport` (verifier name, per-source rows, `Outcome { Passed, Failed, NoSources, ToolMissing }`, diagnostics)
+- [x] 2.4 Define `DiscoveryResult` as a tagged enum (`Found { path, version }` / `NotInstalled { tool, install_hint }`) — serializes with `kind` discriminator
+- [x] 2.5 `Registry` with `register / find / iter / len`, dedupes by stable name, dispatches in registration order
 
 ## 3. Cedar end-to-end (the headline integration)
 
