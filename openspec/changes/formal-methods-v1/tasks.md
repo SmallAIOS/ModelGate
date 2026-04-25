@@ -33,13 +33,13 @@
 
 ## 5. CLI Integration
 
-- [ ] 5.1 Add `Commands::Verify { command: VerifyCommands }` to `smctl/src/main.rs`
-- [ ] 5.2 Add `VerifyCommands::{Policy, Model, Proof, Protocol, Discover}` enum
-- [ ] 5.3 Wire `--verifier <name>` and `--strict` global-to-verify flags
-- [ ] 5.4 Dispatch each subcommand: build `VerifyContext`, call into `smctl_verify::run`, render report
-- [ ] 5.5 TTY-aware JSON fallback per safety-quality-v1 Decision 9
-- [ ] 5.6 Three-part remediation on every error path
-- [ ] 5.7 `--dry-run` previews planned source roots without running any verifier
+- [x] 5.1 `Commands::Verify { verifier, strict, command: VerifyCommands }` added to smctl
+- [x] 5.2 `VerifyCommands::{Policy, Model, Proof, Protocol, Discover}` enum, each with `--json` per-verb
+- [x] 5.3 `--verifier <name>` and `--strict` are verify-level flags propagating to subverbs via `global = true`
+- [x] 5.4 Dispatch builds `VerifyContext` from the workspace manifest, calls `Verifier::run`, renders the report
+- [x] 5.5 TTY-aware JSON fallback applied (verb `--json` || global `--json` || stdout-not-a-TTY)
+- [x] 5.6 Three-part remediation on the `verifier_not_registered` error path; per-verifier failures inherit from each verifier's own three-part diagnostics
+- [x] 5.7 `--dry-run` prints "would run verifier 'X' against N source pattern(s)" and exits with `DRY_RUN`. `Outcome::ToolMissing` exits 0 by default; `--strict` promotes it to a failure
 
 ## 6. Workspace.toml [verify] section
 
