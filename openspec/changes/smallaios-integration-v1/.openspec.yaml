@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-04-25
+status: ff
+parent: smctl-tool-v1
+description: "End-to-end shakedown of smctl against the real SmallAIOS workspace before cutting v0.1.0. Drives every smctl subcommand against a workspace containing both ModelGate and SmallAIOS, captures the bugs and gaps that surface, and either fixes them inline or files follow-up specs."
