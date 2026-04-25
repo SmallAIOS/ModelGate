@@ -22,11 +22,23 @@ impl Default for Registry {
 impl Registry {
     /// Construct an empty registry. Most callers want
     /// [`Registry::with_default_verifiers`] instead, which assembles
-    /// the canonical set once each per-tool implementation lands.
+    /// the canonical set of every verifier shipped in this crate.
     pub fn new() -> Self {
         Self {
             verifiers: Vec::new(),
         }
+    }
+
+    /// Construct a registry preloaded with every shipped verifier in
+    /// the canonical CLI order: policy (Cedar), model (TLA+), proof
+    /// (Lean 4), protocol (SPIN/Promela).
+    pub fn with_default_verifiers() -> Self {
+        let mut r = Self::new();
+        r.register(crate::CedarVerifier::new());
+        r.register(crate::TlaVerifier::new());
+        r.register(crate::LeanVerifier::new());
+        r.register(crate::SpinVerifier::new());
+        r
     }
 
     /// Register one verifier. The first registration of a given name
@@ -110,6 +122,14 @@ mod tests {
         r.register(StubVerifier { name: "policy" });
         r.register(StubVerifier { name: "policy" });
         assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn with_default_verifiers_includes_all_four() {
+        let r = Registry::with_default_verifiers();
+        assert_eq!(r.len(), 4);
+        let names: Vec<_> = r.iter().map(|v| v.name()).collect();
+        assert_eq!(names, vec!["policy", "model", "proof", "protocol"]);
     }
 
     #[test]

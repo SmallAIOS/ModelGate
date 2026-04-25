@@ -15,10 +15,17 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub mod cedar;
+pub mod lean;
 pub mod registry;
+pub mod shell;
+pub mod spin;
+pub mod tla;
 
 pub use cedar::CedarVerifier;
+pub use lean::LeanVerifier;
 pub use registry::Registry;
+pub use spin::SpinVerifier;
+pub use tla::TlaVerifier;
 
 // --- Trait ---
 

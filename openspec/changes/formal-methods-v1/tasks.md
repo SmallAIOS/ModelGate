@@ -26,10 +26,10 @@
 
 ## 4. Shell-out runners (TLA+, Lean, SPIN)
 
-- [ ] 4.1 `tla::TlaVerifier` — discover `tlc`/`tla2tools.jar`, shell out, parse exit code
-- [ ] 4.2 `lean::LeanVerifier` — discover `lake`, shell out at each `[verify.proof] roots`
-- [ ] 4.3 `spin::SpinVerifier` — discover `spin`, shell out at each `[verify.protocol] specs`
-- [ ] 4.4 Unit tests stub the binaries via `which`-mock; deep output parsing is out of scope (per proposal Out-of-Scope)
+- [x] 4.1 `tla::TlaVerifier` — discover `tlc -h`, shell out, parse exit code
+- [x] 4.2 `lean::LeanVerifier` — discover `lake --version`, shell out at each `[verify.proof] roots` with `lake build`
+- [x] 4.3 `spin::SpinVerifier` — discover `spin -V`, shell out at each `[verify.protocol] specs` with `spin -a`
+- [x] 4.4 Shared `shell.rs` helpers (`Shell` config struct, `discover_binary`, `run_against_sources`) so each per-tool module is ~15 lines. Unit tests use `/bin/sh` for the Found path and a deliberately bogus binary name for the NotInstalled path. `Registry::with_default_verifiers()` constructor preloads the canonical four in CLI order.
 
 ## 5. CLI Integration
 
