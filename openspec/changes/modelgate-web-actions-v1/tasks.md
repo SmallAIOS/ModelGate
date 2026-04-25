@@ -40,10 +40,10 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Inference screen
 
-- [ ] Add `Inference` to the rail.
-- [ ] New `<InferenceScreen>` — two-column layout per `specs/actions.md`.
-- [ ] `<JsonEditor>` component for the input.
-- [ ] `Run inference` button runs `useTestInference`. Right column renders the result or the error.
+- [x] Add `Inference` to the rail.
+- [x] New `<InferenceScreen>` — two-column layout per `specs/actions.md`.
+- [x] `<JsonEditor>` component for the input — textarea wrapper, parent owns parse + parseError plumbing.
+- [x] `Run inference` button runs `useTestInference`. Right column renders the result with model / latency / tokens / output.
 
 ## Voice & A11y
 

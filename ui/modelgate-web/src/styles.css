@@ -406,3 +406,46 @@
 .form__row input:disabled,
 .form__row select:disabled { opacity: 0.6; }
 .form__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* Inference screen — two-column input/result layout */
+.inference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.inference__input,
+.inference__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.inference__output {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow: auto;
+}
+
+/* JSON editor */
+.json-editor { display: flex; flex-direction: column; gap: 4px; }
+.json-editor__textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: var(--space-2);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  resize: vertical;
+}
+.json-editor__textarea--invalid { border-color: var(--alert-1); }
+.json-editor__error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--alert-1);
+  font-family: var(--font-mono);
+}
