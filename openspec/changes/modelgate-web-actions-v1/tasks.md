@@ -15,14 +15,14 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Mutation Hooks
 
-- [ ] `src/hooks/mutations.ts` — `useRegisterModel`, `useRemoveModel`, `useSetRoute`, `useTestInference`. Each invalidates the right query key on success and pushes a toast.
+- [x] `src/hooks/mutations.ts` — `useRegisterModel`, `useRemoveModel`, `useSetRoute`, `useTestInference`. Each invalidates the right query key on success and pushes a toast.
 
 ## Models screen — Remove action
 
-- [ ] Add a `Remove` button to each `ModelsScreen` row.
-- [ ] On click, open a `<ConfirmDialog>` with the CLI equivalent.
-- [ ] On confirm, run `useRemoveModel`. Row enters loading state until the mutation resolves.
-- [ ] Toast on success / failure. List refetches.
+- [x] Add a `Remove` button to each `ModelsScreen` row.
+- [x] On click, open a `<ConfirmDialog>` with the CLI equivalent.
+- [x] On confirm, run `useRemoveModel`. Row enters loading state until the mutation resolves.
+- [x] Toast on success / failure. List refetches.
 
 ## Models screen — Register action
 

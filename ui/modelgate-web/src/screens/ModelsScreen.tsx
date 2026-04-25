@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../api';
 import type { Model } from '../api';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, ErrorBox } from '../components/ErrorBox';
+import { useRemoveModel } from '../hooks/mutations';
 import { humanBytes } from '../utils';
 
 export function ModelsScreen() {
@@ -10,6 +13,8 @@ export function ModelsScreen() {
     queryKey: ['models'],
     queryFn: () => api.listModels(),
   });
+  const remove = useRemoveModel();
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
 
   if (models.isError) return <ErrorBox title="Could not list models" error={models.error} />;
   if (!models.data) return <p className="muted">Loading…</p>;
@@ -26,6 +31,7 @@ export function ModelsScreen() {
             <th>Size</th>
             <th>Status</th>
             <th>Registered</th>
+            <th aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -36,10 +42,42 @@ export function ModelsScreen() {
               <td>{humanBytes(m.size_bytes)}</td>
               <td>{m.status}</td>
               <td>{m.registered_at}</td>
+              <td>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setPendingRemove(m.name)}
+                  disabled={remove.isPending && remove.variables === m.name}
+                >
+                  Remove
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title="Remove model"
+        body={
+          <>
+            Remove <code>{pendingRemove}</code> from this ModelGate instance? This
+            cannot be undone.
+          </>
+        }
+        cliEquivalent={pendingRemove ? `smctl gate models remove ${pendingRemove}` : undefined}
+        confirmLabel="Remove model"
+        destructive
+        busy={remove.isPending}
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={() => {
+          if (!pendingRemove) return;
+          remove.mutate(pendingRemove, {
+            onSettled: () => setPendingRemove(null),
+          });
+        }}
+      />
     </section>
   );
 }
