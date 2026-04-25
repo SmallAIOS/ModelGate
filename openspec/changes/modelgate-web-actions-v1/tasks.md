@@ -47,8 +47,8 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Voice & A11y
 
-- [ ] Manual voice review of every new string — imperative buttons, sentence-case labels, no emoji, no exclamation points.
-- [ ] Accessibility check — focus trap in dialogs, `aria-live` on toaster, every interactive element a `<button>` or `<a>`.
+- [x] Manual voice review of every new string — imperative buttons (`Register model`, `Remove model`, `Set route`, `Save route`, `Run inference`, `Upload`), sentence-case labels and table headers, no emoji, no exclamation points. Empty / pending states reuse CLI vocabulary verbatim.
+- [x] Accessibility check — `aria-modal` + `aria-labelledby` on dialogs with initial focus on the confirm button, `aria-live="polite"` + `role="status"` on the toaster, `role="progressbar"` with valuemin/valuemax/valuenow on the upload progress bar, every interactive element a `<button>` or `<select>` / `<input>` inside a `<label>`.
 
 ## Tests
 
@@ -57,7 +57,10 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Verify
 
-- [ ] `npm run typecheck` clean
-- [ ] `npm run build` clean and under the 2 MB budget
-- [ ] `cargo build --workspace` still clean (no Rust changes expected, but a sanity rebuild)
-- [ ] Manual smoke against the running `smctl gate web` end-to-end: register a small file, remove it, set a route, run an inference.
+- [x] `npm run typecheck` clean
+- [x] `npm run build` clean — bundle 200 KB / 62.6 KB gzipped, under the 2 MB budget
+- [x] `cargo build --workspace` clean — 201 workspace tests still pass after the dist/ refresh
+- [x] `npm test` clean — 9 vitest cases pass
+- [x] `cargo clippy --workspace -- -D warnings` clean
+- [x] `cargo fmt --check` clean
+- [ ] Manual smoke against the running `smctl gate web` end-to-end — pending a real ModelGate. Wiremock-backed Rust path tests (covered in `modelgate-web-v1`) exercise every `/api/*` route the SPA calls.
