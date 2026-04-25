@@ -1,5 +1,8 @@
 # ModelGate
 
+[![CI](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/SmallAIOS/ModelGate/branch/develop/graph/badge.svg)](https://codecov.io/gh/SmallAIOS/ModelGate)
+
 **smctl** (SmallAIOS Control) is a unified CLI for managing multi-repo workspaces, git flow branching, spec-driven development, and dependency-ordered builds.
 
 ## Installation

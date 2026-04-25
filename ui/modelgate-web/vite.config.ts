@@ -34,5 +34,17 @@ export default defineConfig({
     environment: 'happy-dom',
     globals: false,
     include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      // lcov for Codecov, text for the terminal summary, html for
+      // local browsing under coverage/index.html.
+      reporter: ['text', 'lcov', 'html'],
+      reportsDirectory: 'coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/main.tsx',
+      ],
+    },
   },
 });
