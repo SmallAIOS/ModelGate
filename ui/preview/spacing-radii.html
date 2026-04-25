@@ -1,0 +1,20 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:var(--bg-0);}
+  .card{padding:20px 24px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+  .ex{display:flex;flex-direction:column;align-items:center;gap:8px;}
+  .box{background:var(--bg-1);border:1px solid var(--fg-3);width:72px;height:48px;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;color:var(--fg-2);}
+  .label{font-family:var(--font-mono);font-size:11px;color:var(--fg-1);}
+  .hairline{box-shadow:0 1px 0 0 rgba(11,12,14,0.06), 0 1px 2px rgba(11,12,14,0.06), 0 4px 8px rgba(11,12,14,0.04);}
+  .raised{box-shadow:0 0 0 1px rgba(11,12,14,0.08), 0 2px 4px rgba(11,12,14,0.08), 0 16px 24px rgba(11,12,14,0.08);border:none;}
+</style></head>
+<body class="ds-root"><div class="card">
+  <div class="ex"><div class="box" style="border-radius:0">r-0</div><span class="label">0px · data</span></div>
+  <div class="ex"><div class="box" style="border-radius:4px">r-1</div><span class="label">4px · input/btn</span></div>
+  <div class="ex"><div class="box" style="border-radius:6px">r-2</div><span class="label">6px · card/menu</span></div>
+  <div class="ex"><div class="box" style="border-radius:8px">r-3</div><span class="label">8px · modal</span></div>
+  <div class="ex"><div class="box hairline" style="border:none;border-radius:6px">sh-1</div><span class="label">shadow-1 · menu</span></div>
+  <div class="ex"><div class="box raised" style="border-radius:8px">sh-2</div><span class="label">shadow-2 · modal</span></div>
+  <div class="ex"><div class="box" style="border-radius:999px;width:56px;height:20px;font-size:10px">● pill</div><span class="label">pill · status only</span></div>
+  <div class="ex"><div class="box" style="border:1px dashed var(--fg-3)">dashed</div><span class="label">skeleton only</span></div>
+</div></body></html>

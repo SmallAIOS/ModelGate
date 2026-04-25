@@ -8,16 +8,21 @@ use smctl_flow::{
 };
 use smctl_workspace::WorkspaceManifest;
 
-/// Set up a workspace root with one real git repo that has a main branch.
-fn setup_workspace(root: &Path, repo_name: &str) -> WorkspaceManifest {
-    let repo_path = root.join(repo_name);
-    std::fs::create_dir_all(&repo_path).unwrap();
-
-    let cmds: &[&[&str]] = &[&["git", "init"], &["git", "checkout", "-b", "main"]];
+/// Initialize a git repo at `repo_path` with `main` as the default branch and
+/// `user.email`/`user.name` configured locally. The local config is what makes
+/// downstream library calls (`git merge`, `git commit`) work on CI runners
+/// that have no global gitconfig. The `init.defaultBranch=main` override keeps
+/// a stray `master` from being created by git's built-in default.
+fn init_repo(repo_path: &Path) {
+    let cmds: &[&[&str]] = &[
+        &["git", "-c", "init.defaultBranch=main", "init"],
+        &["git", "config", "user.email", "test@test.com"],
+        &["git", "config", "user.name", "Test"],
+    ];
     for cmd in cmds {
         let output = std::process::Command::new(cmd[0])
             .args(&cmd[1..])
-            .current_dir(&repo_path)
+            .current_dir(repo_path)
             .output()
             .unwrap();
         assert!(
@@ -27,6 +32,13 @@ fn setup_workspace(root: &Path, repo_name: &str) -> WorkspaceManifest {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+/// Set up a workspace root with one real git repo that has a main branch.
+fn setup_workspace(root: &Path, repo_name: &str) -> WorkspaceManifest {
+    let repo_path = root.join(repo_name);
+    std::fs::create_dir_all(&repo_path).unwrap();
+    init_repo(&repo_path);
 
     // Create initial commit
     std::fs::write(repo_path.join("README.md"), "# Test\n").unwrap();
@@ -77,15 +89,7 @@ fn setup_multi_repo_workspace(root: &Path) -> WorkspaceManifest {
     for name in &["alpha", "beta"] {
         let repo_path = root.join(name);
         std::fs::create_dir_all(&repo_path).unwrap();
-
-        let cmds: &[&[&str]] = &[&["git", "init"], &["git", "checkout", "-b", "main"]];
-        for cmd in cmds {
-            std::process::Command::new(cmd[0])
-                .args(&cmd[1..])
-                .current_dir(&repo_path)
-                .output()
-                .unwrap();
-        }
+        init_repo(&repo_path);
 
         std::fs::write(repo_path.join("README.md"), "# Test\n").unwrap();
         let cmds: &[&[&str]] = &[

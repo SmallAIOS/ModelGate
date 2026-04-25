@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,17 @@ pub struct WorkspaceManifest {
     pub worktree: WorktreeConfig,
     #[serde(default)]
     pub spec: SpecConfig,
+    /// Optional `[logging]` table. When absent, callers use the same
+    /// defaults as the CLI: stderr only, INFO level, `local0` facility.
+    /// Declared in `openspec/changes/smctl-logging-v1/specs/logging.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logging: Option<LoggingManifestSection>,
+
+    /// Optional `[gate]` table. When absent, callers use the
+    /// smctl-gate defaults (`http://localhost:8080`, 30s timeout).
+    /// Declared in `openspec/changes/smctl-gate-v1/specs/gate-api.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<GateManifestSection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +146,102 @@ impl Default for SpecConfig {
     }
 }
 
+/// The `[logging]` section of `workspace.toml`.
+///
+/// All fields are optional. When absent, each maps to its default:
+///
+/// - `transports` — `["stderr"]`
+/// - `level` — `"info"`
+/// - `facility` — `"local0"` (numeric `16`)
+/// - `file` — unset
+///
+/// Facility names are validated at parse time. Only names from the
+/// spec's facility table are accepted (`daemon`, `local0` through
+/// `local7`). Unknown names produce a parse error rather than a
+/// silent fallback.
+///
+/// Precedence is resolved by the CLI: CLI flags > env vars > this
+/// section > built-in defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoggingManifestSection {
+    /// Active transports. Each entry is one of `"stderr"`, `"file"`,
+    /// `"syslog"`. Empty vector is equivalent to the default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transports: Vec<String>,
+
+    /// Path for the file transport. Only read when `transports`
+    /// contains `"file"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
+
+    /// Syslog facility name (`"local0"`..`"local7"` or `"daemon"`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_facility"
+    )]
+    pub facility: Option<String>,
+
+    /// Minimum severity: `"error"`, `"warn"`, `"info"`, `"debug"`,
+    /// `"trace"`. Case-insensitive at parse time in the CLI resolver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+}
+
+/// The `[gate]` section of `workspace.toml`.
+///
+/// Both fields are optional. When unset, the defaults in
+/// `smctl_gate::GateConfig::default()` apply. Precedence is resolved by
+/// the CLI: CLI flags / env vars (`MODELGATE_URL`) > this section >
+/// built-in defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateManifestSection {
+    /// ModelGate endpoint URL (e.g. `"http://localhost:8080"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Request timeout in seconds for all gate operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Map a facility name from the spec's table to its RFC 5424 numeric
+/// code. Returns `None` for unknown names. Exposed so the CLI
+/// precedence resolver can translate the manifest value without
+/// re-implementing the table.
+pub fn facility_code(name: &str) -> Option<u8> {
+    match name {
+        "daemon" => Some(3),
+        "local0" => Some(16),
+        "local1" => Some(17),
+        "local2" => Some(18),
+        "local3" => Some(19),
+        "local4" => Some(20),
+        "local5" => Some(21),
+        "local6" => Some(22),
+        "local7" => Some(23),
+        _ => None,
+    }
+}
+
+fn deserialize_facility<'de, D>(de: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let opt: Option<String> = Option::deserialize(de)?;
+    if let Some(ref name) = opt
+        && facility_code(name).is_none()
+    {
+        return Err(D::Error::custom(format!(
+            "unknown facility '{name}'; expected one of daemon, local0..local7"
+        )));
+    }
+    Ok(opt)
+}
+
 impl RepoConfig {
     /// Effective local path for this repo within the workspace.
     pub fn local_path(&self) -> &str {
@@ -212,6 +319,8 @@ pub fn init_workspace(root: &Path, name: &str) -> Result<WorkspaceManifest> {
         flow: FlowConfig::default(),
         worktree: WorktreeConfig::default(),
         spec: SpecConfig::default(),
+        logging: None,
+        gate: None,
     };
 
     manifest.save_to_root(root)?;
@@ -227,7 +336,9 @@ pub fn add_repo(
     path: Option<&str>,
 ) -> Result<()> {
     if manifest.find_repo(name).is_some() {
-        anyhow::bail!("repo '{name}' already exists in workspace");
+        anyhow::bail!(
+            "repo '{name}' already exists in workspace. The add was rejected to avoid overwriting config. Run `smctl workspace remove {name}` first, or choose a different name."
+        );
     }
 
     manifest.repos.push(RepoConfig {
@@ -251,7 +362,9 @@ pub fn remove_repo(manifest: &mut WorkspaceManifest, name: &str) -> Result<()> {
     let len = manifest.repos.len();
     manifest.repos.retain(|r| r.name != name);
     if manifest.repos.len() == len {
-        anyhow::bail!("repo '{name}' not found in workspace");
+        anyhow::bail!(
+            "repo '{name}' not found in workspace. The remove had no target to act on. Run `smctl workspace status` to list configured repos."
+        );
     }
     tracing::info!("removed repo '{name}' from workspace");
     Ok(())
@@ -393,7 +506,7 @@ pub mod worktree {
                 if !result.status.success() {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     anyhow::bail!(
-                        "failed to add worktree for {} at {}: {}",
+                        "failed to add worktree for {} at {}: {}. Git refused the worktree creation, so no worktree set was produced. Inspect existing worktrees with `smctl worktree list`, then retry or remove the stale entry with `smctl worktree remove <name>`.",
                         repo.name,
                         wt_path.display(),
                         stderr.trim()
@@ -422,7 +535,9 @@ pub mod worktree {
     ) -> Result<()> {
         let base = root.join(&manifest.worktree.base_dir).join(name);
         if !base.exists() {
-            anyhow::bail!("worktree set '{name}' does not exist");
+            anyhow::bail!(
+                "worktree set '{name}' does not exist. The remove had no target to act on. Run `smctl worktree list` to see active worktree sets, or create one with `smctl worktree add {name}`."
+            );
         }
 
         for repo in &manifest.repos {
@@ -467,7 +582,9 @@ pub mod worktree {
     pub fn worktree_path(root: &Path, manifest: &WorkspaceManifest, name: &str) -> Result<PathBuf> {
         let base = root.join(&manifest.worktree.base_dir).join(name);
         if !base.exists() {
-            anyhow::bail!("worktree set '{name}' does not exist");
+            anyhow::bail!(
+                "worktree set '{name}' does not exist. The path lookup has no worktree to return. Run `smctl worktree list` to see active worktree sets, or create one with `smctl worktree add {name}`."
+            );
         }
         Ok(base)
     }
@@ -579,5 +696,128 @@ depends_on = ["SmallAIOS"]
         let manifest = init_workspace(dir.path(), "roundtrip").unwrap();
         let loaded = WorkspaceManifest::load_from_root(dir.path()).unwrap();
         assert_eq!(loaded.workspace.name, manifest.workspace.name);
+    }
+
+    #[test]
+    fn test_logging_section_parses() {
+        let toml_text = r#"
+[workspace]
+name = "log-ws"
+
+[logging]
+transports = ["stderr", "file"]
+file = "/var/log/smctl.log"
+facility = "local2"
+level = "debug"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let logging = manifest.logging.expect("logging section present");
+        assert_eq!(logging.transports, vec!["stderr", "file"]);
+        assert_eq!(
+            logging.file.as_deref(),
+            Some(Path::new("/var/log/smctl.log"))
+        );
+        assert_eq!(logging.facility.as_deref(), Some("local2"));
+        assert_eq!(logging.level.as_deref(), Some("debug"));
+    }
+
+    #[test]
+    fn test_logging_section_absent_is_none() {
+        let toml_text = r#"
+[workspace]
+name = "no-log"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        assert!(manifest.logging.is_none());
+    }
+
+    #[test]
+    fn test_logging_section_rejects_unknown_facility() {
+        let toml_text = r#"
+[workspace]
+name = "bad-facility"
+
+[logging]
+facility = "kern"
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("kern"),
+            "error should cite the bad name: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_gate_section_parses() {
+        let toml_text = r#"
+[workspace]
+name = "gate-ws"
+
+[gate]
+url = "http://gate.internal:9000"
+timeout_secs = 120
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let gate = manifest.gate.expect("gate section present");
+        assert_eq!(gate.url.as_deref(), Some("http://gate.internal:9000"));
+        assert_eq!(gate.timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn test_gate_section_absent_is_none() {
+        let toml_text = r#"
+[workspace]
+name = "no-gate"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        assert!(manifest.gate.is_none());
+    }
+
+    #[test]
+    fn test_gate_section_rejects_unknown_fields() {
+        let toml_text = r#"
+[workspace]
+name = "strict-gate"
+
+[gate]
+url = "http://x:8080"
+bogus = "nope"
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("bogus"),
+            "error should cite the unknown key: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_facility_code_mapping() {
+        assert_eq!(facility_code("daemon"), Some(3));
+        assert_eq!(facility_code("local0"), Some(16));
+        assert_eq!(facility_code("local7"), Some(23));
+        assert_eq!(facility_code("kern"), None);
+        assert_eq!(facility_code("local8"), None);
+    }
+
+    #[test]
+    fn test_logging_section_roundtrip_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manifest = init_workspace(dir.path(), "roundtrip-logging").unwrap();
+        manifest.logging = Some(LoggingManifestSection {
+            transports: vec!["stderr".to_string(), "syslog".to_string()],
+            file: Some(PathBuf::from("/tmp/smctl.log")),
+            facility: Some("local3".to_string()),
+            level: Some("warn".to_string()),
+        });
+        manifest.save_to_root(dir.path()).unwrap();
+
+        let loaded = WorkspaceManifest::load_from_root(dir.path()).unwrap();
+        let logging = loaded.logging.expect("logging section persisted");
+        assert_eq!(logging.transports, vec!["stderr", "syslog"]);
+        assert_eq!(logging.file.as_deref(), Some(Path::new("/tmp/smctl.log")));
+        assert_eq!(logging.facility.as_deref(), Some("local3"));
+        assert_eq!(logging.level.as_deref(), Some("warn"));
     }
 }

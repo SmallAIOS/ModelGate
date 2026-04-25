@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -42,6 +43,19 @@ struct Cli {
     /// Override config file path
     #[arg(short = 'c', long, global = true, env = "SMCTL_CONFIG")]
     config: Option<PathBuf>,
+
+    /// Log level (error, warn, info, debug, trace). Overrides -v/-q.
+    #[arg(long, global = true, env = "SMCTL_LOG_LEVEL")]
+    log_level: Option<String>,
+
+    /// Write RFC 5424 syslog events to this file (append).
+    #[arg(long, global = true, env = "SMCTL_LOG_FILE")]
+    log_file: Option<PathBuf>,
+
+    /// Also emit RFC 5424 events to the local syslog Unix socket.
+    /// Unix only; on Windows this warns and falls back to stderr.
+    #[arg(long, global = true, env = "SMCTL_LOG_SYSLOG")]
+    log_syslog: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -99,6 +113,26 @@ enum Commands {
         cedar: bool,
     },
 
+    /// Run engineering-quality checks across the workspace
+    Quality {
+        #[command(subcommand)]
+        command: QualityCommands,
+    },
+
+    /// Talk to a running ModelGate instance (status, models, routes, test, logs)
+    Gate {
+        /// ModelGate endpoint URL (overrides MODELGATE_URL env and workspace.toml)
+        #[arg(long, env = "MODELGATE_URL", global = true)]
+        url: Option<String>,
+
+        /// Request timeout in seconds
+        #[arg(long, default_value_t = smctl_gate::DEFAULT_TIMEOUT_SECS, global = true)]
+        timeout: u64,
+
+        #[command(subcommand)]
+        command: GateCommands,
+    },
+
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -109,6 +143,27 @@ enum Commands {
     Completions {
         /// Shell to generate completions for
         shell: Shell,
+    },
+
+    /// Start a long-running service (MCP server, etc.)
+    Serve {
+        /// Run as an MCP server exposing smctl tools to AI coding assistants
+        #[arg(long)]
+        mcp: bool,
+
+        /// Use stdio transport (default when --mcp is set without another transport)
+        #[arg(long)]
+        stdio: bool,
+
+        /// Use SSE / streamable-HTTP transport (local only; mutually exclusive with --stdio)
+        #[arg(long)]
+        sse: bool,
+
+        /// TCP port for the SSE transport. The default 9377 spells "MCP" on
+        /// a phone keypad (M=6, C=2... the digits 9377 are chosen for
+        /// memorability and to stay well clear of well-known ports).
+        #[arg(long, default_value_t = 9377)]
+        port: u16,
     },
 
     // --- Convenience aliases ---
@@ -311,6 +366,203 @@ enum SpecCommands {
 }
 
 #[derive(Subcommand, Debug)]
+enum QualityCommands {
+    /// Audit dependencies for published RUSTSEC advisories
+    Audit {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when an advisory meets or exceeds this severity
+        #[arg(long, default_value = "warning", value_parser = parse_audit_severity)]
+        fail_on: smctl_quality::AdvisorySeverity,
+    },
+
+    /// Scan for unused dependencies in workspace manifests
+    Deps {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the unused-dependency count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 1)]
+        fail_on_count: usize,
+    },
+
+    /// Report unsafe code usage across the workspace
+    Unsafe {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when the total unsafe-site count meets this number.
+        /// Use 0 to disable the gate and run in report-only mode.
+        #[arg(long, default_value_t = 0)]
+        fail_on_count: u64,
+    },
+
+    /// Build a module dependency structure matrix and detect cycles
+    Dsm {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any module dependency cycle is detected
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        enforce_no_cycles: bool,
+    },
+
+    /// Measure cyclomatic and cognitive complexity per function
+    Complexity {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+
+        /// Fail the command when any function exceeds this cyclomatic complexity
+        #[arg(long, default_value_t = 15)]
+        cyclomatic_threshold: u32,
+
+        /// Fail the command when any function exceeds this cognitive complexity
+        #[arg(long, default_value_t = 25)]
+        cognitive_threshold: u32,
+
+        /// Scope the scan to this subdirectory instead of the workspace root
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateCommands {
+    /// Show the health and summary metadata of the ModelGate instance
+    Status {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage registered models (list, add, remove)
+    Models {
+        #[command(subcommand)]
+        command: GateModelsCommands,
+    },
+
+    /// Inspect or configure the inference routing table
+    Routes {
+        #[command(subcommand)]
+        command: GateRoutesCommands,
+    },
+
+    /// Run a test inference against a registered model
+    Test {
+        /// Model name
+        model: String,
+
+        /// Path to a JSON file containing the inference input
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Emit the raw InferenceResult JSON on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Stream logs from the ModelGate instance (exit with Ctrl+C)
+    Logs {
+        /// Keep the connection open and stream indefinitely. Accepted for
+        /// parity with tail-like tools; currently the default behaviour.
+        #[arg(long)]
+        follow: bool,
+
+        /// Emit each log entry as newline-delimited JSON on stdout (jsonl)
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Start the ModelGate web dashboard (Ctrl+C to stop)
+    Web {
+        /// Host/IP to bind. Defaults to 127.0.0.1 — remote binds are gated
+        /// behind a future --bind-public flag once auth lands.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// TCP port to bind. 9378 is MCP's 9377 plus one.
+        #[arg(long, default_value_t = 9378)]
+        port: u16,
+
+        /// Open the dashboard in the default browser after the server is up
+        #[arg(long)]
+        open: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateRoutesCommands {
+    /// List all configured routes
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Set (or update) the route for a model
+    Set {
+        /// Model name
+        model: String,
+        /// Endpoint path (e.g. /v1/chat/completions)
+        endpoint: String,
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GateModelsCommands {
+    /// List all registered models
+    List {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Register a new model from a local file
+    Add {
+        /// Path to the model file (.onnx, .gguf, ...)
+        path: PathBuf,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Unregister a model by name
+    Remove {
+        /// Model name
+        name: String,
+
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn parse_audit_severity(raw: &str) -> Result<smctl_quality::AdvisorySeverity, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "none" => Ok(smctl_quality::AdvisorySeverity::None),
+        "low" => Ok(smctl_quality::AdvisorySeverity::Low),
+        "warning" => Ok(smctl_quality::AdvisorySeverity::Warning),
+        "medium" | "moderate" => Ok(smctl_quality::AdvisorySeverity::Medium),
+        "high" => Ok(smctl_quality::AdvisorySeverity::High),
+        "critical" => Ok(smctl_quality::AdvisorySeverity::Critical),
+        other => Err(format!(
+            "unknown severity '{other}'. valid values are: none, low, warning, medium, high, critical. pick one of those and pass it to --fail-on"
+        )),
+    }
+}
+
+#[derive(Subcommand, Debug)]
 enum ConfigCommands {
     /// Print effective configuration
     Show,
@@ -340,37 +592,219 @@ impl Cli {
     }
 }
 
-fn init_tracing(verbose: u8, quiet: bool) {
-    let level = if quiet {
-        "error"
+/// Return true when stdout is attached to a TTY.
+///
+/// Used by subcommands that default to JSON when their output will be piped
+/// into another process (per safety-quality-v1/design.md Decision 9).
+fn is_stdout_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+/// Best-effort launch of `url` in the operator's default browser. Uses
+/// the platform-native opener (`open` on macOS, `xdg-open` on Linux,
+/// `cmd /c start` on Windows). Returns the first I/O error. No new
+/// dependency — small enough to hand-roll.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .status();
+    let status = result?;
+    if status.success() {
+        Ok(())
     } else {
-        match verbose {
-            0 => "warn",
-            1 => "info",
-            2 => "debug",
-            _ => "trace",
+        Err(std::io::Error::other(format!(
+            "browser opener exited with status {status}"
+        )))
+    }
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i + 1 < UNITS.len() {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} {}", UNITS[0])
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
+}
+
+/// Render a `GateError` to stdout (JSON) or stderr (human + remediation)
+/// and return the conventional general-error exit code.
+fn gate_error_exit(err: smctl_gate::GateError, error_kind: &str, global_json: bool) -> Result<i32> {
+    let want_json = global_json || !is_stdout_tty();
+    let msg = format!("{err}");
+    if want_json {
+        let payload = serde_json::json!({
+            "error": error_kind,
+            "message": msg,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        eprintln!("error: {msg}");
+        let hint = match err {
+            smctl_gate::GateError::ConnectionRefused { .. } => {
+                "start ModelGate and retry, or point smctl at a reachable instance with --url or MODELGATE_URL"
+            }
+            smctl_gate::GateError::Timeout { .. } => {
+                "raise --timeout, or check that ModelGate is responsive"
+            }
+            smctl_gate::GateError::ModelNotFound { .. } => {
+                "run `smctl gate models list` to see registered models"
+            }
+            smctl_gate::GateError::FileNotFound { .. } => {
+                "check the path is correct and the file is readable, then re-run"
+            }
+            smctl_gate::GateError::HttpError { .. } => {
+                "inspect the ModelGate logs for the failing request"
+            }
+            _ => "re-run with -v for more detail",
+        };
+        eprintln!("remediation: {hint}");
+    }
+    Ok(exit_code::GENERAL_ERROR)
+}
+
+fn init_tracing(cli: &Cli) -> Result<()> {
+    // Precedence (highest first): CLI flags > env vars > workspace.toml
+    // [logging] > built-in defaults. CLI + env are fused by clap's
+    // `env` attribute, so `cli.log_*` already reflects that layer.
+    // Load the manifest optionally — missing workspace is not an
+    // error here; we just fall through to defaults.
+    let manifest_logging = load_manifest_logging(cli);
+    let m = manifest_logging.as_ref();
+
+    let level = if let Some(explicit) = &cli.log_level {
+        explicit
+            .parse::<smctl_log::LogLevel>()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else if cli.quiet {
+        smctl_log::LogLevel::Error
+    } else if cli.verbose > 0 {
+        match cli.verbose {
+            1 => smctl_log::LogLevel::Debug,
+            _ => smctl_log::LogLevel::Trace,
         }
+    } else if let Some(level) = m.and_then(|l| l.level.as_deref()) {
+        level
+            .parse::<smctl_log::LogLevel>()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        smctl_log::LogLevel::Info
     };
 
-    let env_filter = std::env::var("SMCTL_LOG").unwrap_or_else(|_| level.to_string());
+    // Resolve transports. CLI/env come first: an explicit --log-file
+    // means "file is on"; --log-syslog means "syslog is on". Anything
+    // the CLI did not set gets filled from the manifest's transports
+    // list, and stderr is on by default if no other transport speaks.
+    let file = cli
+        .log_file
+        .clone()
+        .or_else(|| m.and_then(|l| l.file.clone()));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(false)
-        .init();
+    let manifest_wants = |name: &str| -> bool {
+        m.map(|l| l.transports.iter().any(|t| t == name))
+            .unwrap_or(false)
+    };
+
+    let syslog = cli.log_syslog || manifest_wants("syslog");
+
+    // stderr: on when explicitly listed in the manifest, or by default
+    // when no file transport is active. Verbose runs also force it on
+    // so interactive users still see events even with --log-file.
+    let stderr_from_manifest = manifest_wants("stderr");
+    let emit_stderr = if stderr_from_manifest {
+        true
+    } else if file.is_some() || syslog {
+        cli.verbose > 0
+    } else {
+        true
+    };
+
+    let facility = m
+        .and_then(|l| l.facility.as_deref())
+        .and_then(smctl_workspace::facility_code)
+        .unwrap_or(16);
+
+    let config = smctl_log::LoggingConfig {
+        level,
+        stderr: emit_stderr,
+        file,
+        syslog,
+        facility,
+        ..Default::default()
+    };
+
+    smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Best-effort load of the `[logging]` section from `workspace.toml`.
+/// Silently returns `None` when there is no workspace, the manifest
+/// is unreadable, or the section is absent. Failures here MUST NOT
+/// block CLI startup — logging is observability, not a hard
+/// dependency.
+fn load_manifest_logging(cli: &Cli) -> Option<smctl_workspace::LoggingManifestSection> {
+    let root = if let Some(ref path) = cli.workspace {
+        path.clone()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        smctl::find_workspace_root(&cwd)?
+    };
+    let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
+    manifest.logging
+}
+
+/// Best-effort load of the `[gate]` section from `workspace.toml`.
+/// Silently returns `None` when there is no workspace, the manifest
+/// is unreadable, or the section is absent. Failures here MUST NOT
+/// block `smctl gate` — the client falls back to `DEFAULT_URL`.
+fn load_manifest_gate(
+    workspace_override: Option<&Path>,
+) -> Option<smctl_workspace::GateManifestSection> {
+    let root = if let Some(path) = workspace_override {
+        path.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        smctl::find_workspace_root(&cwd)?
+    };
+    let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root).ok()?;
+    manifest.gate
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    init_tracing(cli.verbose, cli.quiet);
+    // `serve --mcp` owns stdout for the MCP protocol and initializes
+    // tracing inside the subcommand handler so it can route logs to
+    // stderr via `smctl_log::init(..., stderr: true, file: None)`.
+    // Every other command uses the normal init_tracing path.
+    let defer_tracing = matches!(cli.command, Commands::Serve { mcp: true, .. });
+    if !defer_tracing && let Err(e) = init_tracing(&cli) {
+        eprintln!("error: failed to initialize logging: {e:#}");
+        process::exit(exit_code::GENERAL_ERROR);
+    }
 
     let result = run(cli).await;
 
     match result {
         Ok(code) => process::exit(code),
         Err(e) => {
+            tracing::error!(
+                msgid = %smctl_log::MsgId::Uncategorized,
+                error = %e,
+                "unhandled error"
+            );
             eprintln!("error: {e:#}");
             process::exit(exit_code::GENERAL_ERROR);
         }
@@ -415,6 +849,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
 
                 let manifest = smctl_workspace::init_workspace(&root, &ws_name)?;
+                tracing::info!(
+                    msgid = %smctl_log::MsgId::WorkspaceInitialized,
+                    name = %manifest.workspace.name,
+                    path = %root.display(),
+                    "initialized workspace"
+                );
                 println!(
                     "{}",
                     format_output_with(&manifest, fmt, |m| {
@@ -482,13 +922,7 @@ async fn run(cli: Cli) -> Result<i32> {
                         ss.iter()
                             .map(|s| {
                                 let state = if s.clean { "clean" } else { "dirty" };
-                                format!(
-                                    "  {:<16} {:<16} {} {}",
-                                    s.name,
-                                    s.branch,
-                                    if s.clean { "\u{2713}" } else { "\u{2717}" },
-                                    state
-                                )
+                                format!("  {:<16} {:<16} {}", s.name, s.branch, state)
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -635,8 +1069,8 @@ async fn run(cli: Cli) -> Result<i32> {
                         r.repos
                             .iter()
                             .map(|rr| {
-                                let icon = if rr.success { "\u{2713}" } else { "\u{2717}" };
-                                format!("  {} {} — {}", icon, rr.repo_name, rr.message)
+                                let status = if rr.success { "passed" } else { "failed" };
+                                format!("  {} {} — {}", status, rr.repo_name, rr.message)
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -849,6 +1283,12 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
 
                     let info = smctl_spec::new_spec(&openspec_dir, &name)?;
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::SpecCreated,
+                        name = %info.name,
+                        path = %info.path.display(),
+                        "spec created"
+                    );
                     println!(
                         "{}",
                         format_output_with(&info, fmt, |i| {
@@ -863,10 +1303,20 @@ async fn run(cli: Cli) -> Result<i32> {
                     {
                         match smctl_flow::feature_start(&root, &manifest, &name, None) {
                             Ok(result) => {
+                                tracing::info!(
+                                    msgid = %smctl_log::MsgId::FeatureStarted,
+                                    name = %name,
+                                    branch = %result.branch_name,
+                                    "feature branch created"
+                                );
                                 println!("created branch '{}'", result.branch_name);
                             }
                             Err(e) => {
-                                tracing::warn!("could not auto-create branch: {e}");
+                                tracing::warn!(
+                                    msgid = %smctl_log::MsgId::Uncategorized,
+                                    error = %e,
+                                    "could not auto-create branch"
+                                );
                             }
                         }
                     }
@@ -960,6 +1410,12 @@ async fn run(cli: Cli) -> Result<i32> {
                         return Ok(exit_code::DRY_RUN);
                     }
                     let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::SpecArchived,
+                        name = %spec_name,
+                        path = %dest.display(),
+                        "spec archived"
+                    );
                     println!("archived spec '{}' to {}", spec_name, dest.display());
 
                     // Auto-finish feature branch if workspace is available
@@ -969,10 +1425,20 @@ async fn run(cli: Cli) -> Result<i32> {
                     {
                         match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
                             Ok(result) => {
+                                tracing::info!(
+                                    msgid = %smctl_log::MsgId::FeatureFinished,
+                                    name = %spec_name,
+                                    branch = %result.branch_name,
+                                    "feature branch merged"
+                                );
                                 println!("merged branch '{}' into develop", result.branch_name);
                             }
                             Err(e) => {
-                                tracing::warn!("could not auto-finish branch: {e}");
+                                tracing::warn!(
+                                    msgid = %smctl_log::MsgId::Uncategorized,
+                                    error = %e,
+                                    "could not auto-finish branch"
+                                );
                             }
                         }
                     }
@@ -990,14 +1456,18 @@ async fn run(cli: Cli) -> Result<i32> {
                     println!("phase: {:?}", info.phase);
                     println!(
                         "documents: proposal={} design={} tasks={}",
-                        if info.has_proposal { "ok" } else { "MISSING" },
-                        if info.has_design { "ok" } else { "MISSING" },
-                        if info.has_tasks { "ok" } else { "MISSING" },
+                        if info.has_proposal {
+                            "present"
+                        } else {
+                            "absent"
+                        },
+                        if info.has_design { "present" } else { "absent" },
+                        if info.has_tasks { "present" } else { "absent" },
                     );
                     println!("tasks: {}/{} complete", info.tasks_done, info.tasks_total);
 
                     if result.valid {
-                        println!("validation: PASS");
+                        println!("validation: passed");
                         if info.tasks_total > 0 && info.tasks_done == info.tasks_total {
                             println!("ready to archive");
                         } else {
@@ -1005,7 +1475,7 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
                         Ok(exit_code::SUCCESS)
                     } else {
-                        println!("validation: FAIL");
+                        println!("validation: failed");
                         for issue in &result.issues {
                             println!("  - {issue}");
                         }
@@ -1017,7 +1487,9 @@ async fn run(cli: Cli) -> Result<i32> {
                     let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
 
                     if !info.has_tasks {
-                        anyhow::bail!("spec '{spec_name}' has no tasks.md");
+                        anyhow::bail!(
+                            "spec '{spec_name}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {spec_name}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {spec_name}` and recreating with `smctl spec new {spec_name}`."
+                        );
                     }
 
                     let tasks_path = info.path.join("tasks.md");
@@ -1073,17 +1545,53 @@ async fn run(cli: Cli) -> Result<i32> {
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
 
             if dry_run {
-                let order = smctl_build::resolve_build_order(&manifest)?;
+                let order = smctl_build::resolve_build_subset(&manifest, repo.as_deref())?;
                 let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
                 println!("would build in order: {}", names.join(" → "));
                 return Ok(exit_code::DRY_RUN);
             }
+
+            tracing::info!(
+                msgid = %smctl_log::MsgId::BuildStarted,
+                repo = repo.as_deref().unwrap_or("*"),
+                parallel = parallel,
+                "build started"
+            );
 
             let report = if parallel {
                 smctl_build::build_parallel(&root, &manifest, repo.as_deref(), test, clean)?
             } else {
                 smctl_build::build(&root, &manifest, repo.as_deref(), test, clean)?
             };
+
+            let passed_count = report.results.iter().filter(|r| r.success).count();
+            let failed_count = report.results.len() - passed_count;
+            if report.all_passed {
+                tracing::info!(
+                    msgid = %smctl_log::MsgId::BuildCompleted,
+                    repo = repo.as_deref().unwrap_or("*"),
+                    duration_ms = report.total_duration_ms as u64,
+                    passed_count = passed_count as u64,
+                    failed_count = failed_count as u64,
+                    "build completed"
+                );
+            } else {
+                let first_failure = report
+                    .results
+                    .iter()
+                    .find(|r| !r.success)
+                    .map(|r| r.repo_name.as_str())
+                    .unwrap_or("");
+                tracing::error!(
+                    msgid = %smctl_log::MsgId::BuildFailed,
+                    repo = repo.as_deref().unwrap_or("*"),
+                    duration_ms = report.total_duration_ms as u64,
+                    passed_count = passed_count as u64,
+                    failed_count = failed_count as u64,
+                    first_failure = first_failure,
+                    "build failed"
+                );
+            }
 
             println!(
                 "{}",
@@ -1092,14 +1600,14 @@ async fn run(cli: Cli) -> Result<i32> {
                         .results
                         .iter()
                         .map(|br| {
-                            let icon = if br.success { "\u{2713}" } else { "\u{2717}" };
-                            format!("  {} {}", icon, br.repo_name)
+                            let status = if br.success { "passed" } else { "failed" };
+                            format!("  {} {}", status, br.repo_name)
                         })
                         .collect();
                     if r.all_passed {
                         lines.push(format!("\nbuild passed ({}ms)", r.total_duration_ms));
                     } else {
-                        lines.push(format!("\nbuild FAILED ({}ms)", r.total_duration_ms));
+                        lines.push(format!("\nbuild failed ({}ms)", r.total_duration_ms));
                     }
                     lines.join("\n")
                 })
@@ -1111,6 +1619,409 @@ async fn run(cli: Cli) -> Result<i32> {
                 Ok(exit_code::BUILD_ERROR)
             }
         }
+
+        Commands::Quality { command } => match command {
+            QualityCommands::Audit { json, fail_on } => {
+                // Honour --json on the verb and the global --json, and
+                // fall back to JSON when stdout is not a TTY (Decision 9
+                // in safety-quality-v1/design.md).
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_audit_available() {
+                    let msg = "cargo-audit is not installed on PATH. smctl quality audit cannot run without it. Install it with: cargo install cargo-audit";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-audit",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would audit dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_audit(&root) {
+                    Ok(r) => smctl_quality::finalise_report(r, fail_on),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "audit_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.advisories.is_empty() {
+                    println!("audit passed: no advisories found");
+                } else {
+                    println!(
+                        "audit {}: {} advisory/advisories found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.advisory_count
+                    );
+                    for a in &report.advisories {
+                        println!(
+                            "  {} {} ({:?}) installed {} — patched in {}",
+                            a.advisory_id,
+                            a.crate_name,
+                            a.severity,
+                            a.installed,
+                            if a.patched.is_empty() {
+                                "(no fix available)".to_string()
+                            } else {
+                                a.patched.join(", ")
+                            }
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: run `cargo update -p <crate>` for each affected crate, or upgrade the direct dependency"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Deps {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_machete_available() {
+                    let msg = "cargo-machete is not installed on PATH. smctl quality deps cannot run without it. Install it with: cargo install cargo-machete";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-machete",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan for unused dependencies at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_deps(&root) {
+                    Ok(r) => smctl_quality::deps::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "deps_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.unused.is_empty() {
+                    println!("deps passed: no unused dependencies found");
+                } else {
+                    println!(
+                        "deps {}: {} unused dependency/dependencies found",
+                        if report.fail { "failed" } else { "completed" },
+                        report.unused_count
+                    );
+                    for u in &report.unused {
+                        println!("  {} in {} ({})", u.dependency, u.manifest, u.crate_name);
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: remove each unused entry from the listed Cargo.toml, or add a `package.metadata.cargo-machete` ignore entry if the dependency is a false positive"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Unsafe {
+                json,
+                fail_on_count,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_geiger_available() {
+                    let msg = "cargo-geiger is not installed on PATH. smctl quality unsafe cannot run without it. Install it with: cargo install cargo-geiger";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-geiger",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would scan unsafe code at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_unsafe(&root) {
+                    Ok(r) => smctl_quality::unsafe_scan::finalise_report(r, fail_on_count),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "unsafe_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.crates.is_empty() {
+                    println!("unsafe passed: no unsafe code found");
+                } else {
+                    println!(
+                        "unsafe {}: {} crate(s) with unsafe code, {} site(s) total",
+                        if report.fail { "failed" } else { "completed" },
+                        report.crate_count,
+                        report.total_unsafe
+                    );
+                    for c in &report.crates {
+                        println!(
+                            "  {} {} — {} unsafe site(s)",
+                            c.crate_name, c.version, c.unsafe_count
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: review unsafe usage in each listed crate and either refactor to safe code or add a SAFETY: comment justifying each block"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Dsm {
+                json,
+                enforce_no_cycles,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = resolve_root().unwrap_or_else(|_| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
+
+                if !smctl_quality::cargo_modules_available() {
+                    let msg = "cargo-modules is not installed on PATH. smctl quality dsm cannot run without it. Install it with: cargo install cargo-modules";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install cargo-modules",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would analyse module structure at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_dsm(&root) {
+                    Ok(r) => smctl_quality::dsm::finalise_report(r, enforce_no_cycles),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "dsm_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.cycles.is_empty() {
+                    println!(
+                        "dsm passed: no module dependency cycles across {} crate(s)",
+                        report.crates_scanned.len()
+                    );
+                } else {
+                    println!(
+                        "dsm {}: {} cycle(s) detected across {} crate(s)",
+                        if report.fail { "failed" } else { "completed" },
+                        report.cycle_count,
+                        report.crates_scanned.len()
+                    );
+                    for c in &report.cycles {
+                        println!(
+                            "  {}: {} <-> {} ({})",
+                            c.crate_name, c.module_a, c.module_b, c.via
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: break the reported cycle by extracting the shared abstraction into a parent module, or invert the dependency direction"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+            QualityCommands::Complexity {
+                json,
+                cyclomatic_threshold,
+                cognitive_threshold,
+                path,
+            } => {
+                let want_json = json || cli.json || !is_stdout_tty();
+
+                let root = path.clone().unwrap_or_else(|| {
+                    resolve_root().unwrap_or_else(|_| {
+                        std::env::current_dir().expect("failed to get current directory")
+                    })
+                });
+
+                if !smctl_quality::cargo_rust_code_analysis_available() {
+                    let msg = "rust-code-analysis-cli is not installed on PATH. smctl quality complexity cannot run without it. Install it with: cargo install rust-code-analysis-cli";
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "tool_missing",
+                            "message": msg,
+                            "remediation": "cargo install rust-code-analysis-cli",
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+
+                if dry_run {
+                    println!("would measure complexity at {}", root.display());
+                    return Ok(exit_code::DRY_RUN);
+                }
+
+                let report = match smctl_quality::run_complexity(&root) {
+                    Ok(r) => smctl_quality::complexity::finalise_report(
+                        r,
+                        cyclomatic_threshold,
+                        cognitive_threshold,
+                    ),
+                    Err(e) => {
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "complexity_failed",
+                                "message": e.to_string(),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {e}");
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+                };
+
+                if want_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else if report.violations.is_empty() {
+                    println!(
+                        "complexity passed: {} function(s) within thresholds (cyclomatic <= {}, cognitive <= {})",
+                        report.function_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                } else {
+                    println!(
+                        "complexity {}: {} function(s) exceed thresholds (cyclomatic > {}, cognitive > {})",
+                        if report.fail { "failed" } else { "completed" },
+                        report.violation_count,
+                        report.threshold_cyclomatic,
+                        report.threshold_cognitive,
+                    );
+                    for v in &report.violations {
+                        println!(
+                            "  {} in {}:{}-{} — cyclomatic {}, cognitive {}",
+                            v.function, v.file, v.start_line, v.end_line, v.cyclomatic, v.cognitive,
+                        );
+                    }
+                    if report.fail {
+                        println!(
+                            "remediation: refactor each flagged function into smaller helpers, or add a justification comment with the rationale"
+                        );
+                    }
+                }
+
+                if report.fail {
+                    Ok(exit_code::GENERAL_ERROR)
+                } else {
+                    Ok(exit_code::SUCCESS)
+                }
+            }
+        },
 
         Commands::Config { command } => {
             let mut config = smctl::SmctlConfig::load_user_config()?;
@@ -1164,9 +2075,511 @@ async fn run(cli: Cli) -> Result<i32> {
             }
         }
 
+        Commands::Gate {
+            url,
+            timeout,
+            command,
+        } => {
+            // Precedence: --url / MODELGATE_URL (fused by clap's `env`) >
+            // workspace.toml [gate].url > DEFAULT_URL. --timeout is a
+            // clap arg with a default value, so it always has a concrete
+            // number; we only consult [gate].timeout_secs when the user
+            // left the default untouched.
+            let manifest_gate = load_manifest_gate(cli.workspace.as_deref());
+            let resolved_url = url
+                .or_else(|| manifest_gate.as_ref().and_then(|g| g.url.clone()))
+                .unwrap_or_else(|| smctl_gate::DEFAULT_URL.to_string());
+            let resolved_timeout = if timeout == smctl_gate::DEFAULT_TIMEOUT_SECS {
+                manifest_gate
+                    .as_ref()
+                    .and_then(|g| g.timeout_secs)
+                    .unwrap_or(timeout)
+            } else {
+                timeout
+            };
+            let cfg = smctl_gate::GateConfig {
+                url: resolved_url,
+                timeout_secs: resolved_timeout,
+            };
+
+            let client = match smctl_gate::GateClient::new(cfg.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    let want_json = cli.json || !is_stdout_tty();
+                    let msg = format!("{e}");
+                    if want_json {
+                        let err = serde_json::json!({
+                            "error": "invalid_config",
+                            "message": msg,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&err)?);
+                    } else {
+                        eprintln!("error: {msg}");
+                        eprintln!(
+                            "remediation: pass --url http://<host>:<port> or set MODELGATE_URL to a valid URL"
+                        );
+                    }
+                    return Ok(exit_code::GENERAL_ERROR);
+                }
+            };
+
+            match command {
+                GateCommands::Status { json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if dry_run {
+                        println!("would query {} for /health", client.base_url());
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.health().await {
+                        Ok(h) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&h)?);
+                            } else {
+                                println!("ModelGate status:");
+                                println!("  URL:     {}", client.base_url());
+                                println!("  Status:  {}", h.status);
+                                println!("  Version: {}", h.version);
+                                println!("  Uptime:  {}s", h.uptime_secs);
+                                println!("  Models:  {}", h.model_count);
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => gate_error_exit(e, "gate_unreachable", cli.json),
+                    }
+                }
+
+                GateCommands::Models { command } => match command {
+                    GateModelsCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/models", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_models().await {
+                            Ok(models) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&models)?);
+                                } else if models.is_empty() {
+                                    println!("no models registered");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<8} {:<12} {:<10} REGISTERED",
+                                        "NAME", "FORMAT", "SIZE", "STATUS"
+                                    );
+                                    for m in &models {
+                                        println!(
+                                            "{:<22} {:<8} {:<12} {:<10} {}",
+                                            m.name,
+                                            m.format,
+                                            human_bytes(m.size_bytes),
+                                            m.status,
+                                            m.registered_at
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_list_failed", cli.json),
+                        }
+                    }
+
+                    GateModelsCommands::Add { path, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if !path.exists() {
+                            let msg = format!("file not found: {}", path.display());
+                            if want_json {
+                                let err = serde_json::json!({
+                                    "error": "file_not_found",
+                                    "message": msg,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&err)?);
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: check the path is correct and the file is readable, then re-run"
+                                );
+                            }
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+
+                        if dry_run {
+                            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+                            println!(
+                                "would upload {} ({}) and register as '{}'",
+                                path.display(),
+                                human_bytes(size),
+                                name
+                            );
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        // Progress is printed to stderr so --json stdout stays
+                        // a pure machine-readable channel.
+                        let progress: Option<smctl_gate::ProgressCallback> = if want_json {
+                            None
+                        } else {
+                            use std::sync::Mutex;
+                            let last: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+                            let last_for_cb = last.clone();
+                            Some(Arc::new(move |sent: u64, total: Option<u64>| {
+                                let mut last_guard = last_for_cb.lock().unwrap();
+                                // Throttle updates to once per ~1% so large uploads
+                                // don't spam the terminal.
+                                let step = total.map(|t| (t / 100).max(1)).unwrap_or(256 * 1024);
+                                if sent - *last_guard >= step || Some(sent) == total {
+                                    *last_guard = sent;
+                                    match total {
+                                        Some(t) => eprint!(
+                                            "\ruploading: {} / {} ({:.0}%)",
+                                            human_bytes(sent),
+                                            human_bytes(t),
+                                            (sent as f64 / t as f64) * 100.0
+                                        ),
+                                        None => eprint!("\ruploading: {}", human_bytes(sent)),
+                                    }
+                                    use std::io::Write;
+                                    let _ = std::io::stderr().flush();
+                                }
+                            }))
+                        };
+
+                        match client.add_model(&path, progress).await {
+                            Ok(model) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&model)?);
+                                } else {
+                                    println!(
+                                        "model '{}' registered ({}, status={})",
+                                        model.name,
+                                        human_bytes(model.size_bytes),
+                                        model.status
+                                    );
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => {
+                                if !want_json {
+                                    eprintln!();
+                                }
+                                gate_error_exit(e, "models_add_failed", cli.json)
+                            }
+                        }
+                    }
+
+                    GateModelsCommands::Remove { name, json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would unregister model '{name}'");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.remove_model(&name).await {
+                            Ok(()) => {
+                                if want_json {
+                                    let ok = serde_json::json!({
+                                        "removed": name,
+                                    });
+                                    println!("{}", serde_json::to_string_pretty(&ok)?);
+                                } else {
+                                    println!("model '{name}' removed");
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "models_remove_failed", cli.json),
+                        }
+                    }
+                },
+
+                GateCommands::Routes { command } => match command {
+                    GateRoutesCommands::List { json } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would query {} for /api/v1/routes", client.base_url());
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.list_routes().await {
+                            Ok(routes) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&routes)?);
+                                } else if routes.is_empty() {
+                                    println!("no routes configured");
+                                } else {
+                                    println!(
+                                        "{:<22} {:<28} {:<8} REQUESTS",
+                                        "MODEL", "ENDPOINT", "ACTIVE"
+                                    );
+                                    for r in &routes {
+                                        println!(
+                                            "{:<22} {:<28} {:<8} {}",
+                                            r.model,
+                                            r.endpoint,
+                                            if r.active { "yes" } else { "no" },
+                                            r.request_count
+                                        );
+                                    }
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_list_failed", cli.json),
+                        }
+                    }
+
+                    GateRoutesCommands::Set {
+                        model,
+                        endpoint,
+                        json,
+                    } => {
+                        let want_json = json || cli.json || !is_stdout_tty();
+
+                        if dry_run {
+                            println!("would route model '{model}' -> {endpoint}");
+                            return Ok(exit_code::DRY_RUN);
+                        }
+
+                        match client.set_route(&model, &endpoint).await {
+                            Ok(route) => {
+                                if want_json {
+                                    println!("{}", serde_json::to_string_pretty(&route)?);
+                                } else {
+                                    println!("route set: {} -> {}", route.model, route.endpoint);
+                                }
+                                Ok(exit_code::SUCCESS)
+                            }
+                            Err(e) => gate_error_exit(e, "routes_set_failed", cli.json),
+                        }
+                    }
+                },
+
+                GateCommands::Logs { follow: _, json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if dry_run {
+                        println!("would open SSE stream {} /api/v1/logs", client.base_url());
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    let stream = match client.stream_logs().await {
+                        Ok(s) => s,
+                        Err(e) => return gate_error_exit(e, "logs_stream_failed", cli.json),
+                    };
+
+                    use futures_util::StreamExt;
+                    let mut stream = stream;
+                    let ctrl_c = tokio::signal::ctrl_c();
+                    tokio::pin!(ctrl_c);
+
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = &mut ctrl_c => {
+                                if !want_json {
+                                    eprintln!("\nlog stream closed");
+                                }
+                                return Ok(exit_code::SUCCESS);
+                            }
+                            next = stream.next() => {
+                                match next {
+                                    Some(Ok(entry)) => {
+                                        if want_json {
+                                            println!("{}", serde_json::to_string(&entry)?);
+                                        } else {
+                                            println!(
+                                                "{} {:<5} {}",
+                                                entry.timestamp, entry.level, entry.message
+                                            );
+                                        }
+                                    }
+                                    Some(Err(e)) => {
+                                        return gate_error_exit(e, "logs_stream_failed", cli.json);
+                                    }
+                                    None => {
+                                        // Server closed the stream.
+                                        return Ok(exit_code::SUCCESS);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                GateCommands::Web { host, port, open } => {
+                    use std::net::{IpAddr, SocketAddr};
+
+                    let ip: IpAddr = host.parse().map_err(|e| {
+                        anyhow::anyhow!(
+                            "invalid --host '{host}': {e}. Pass an IP literal like 127.0.0.1."
+                        )
+                    })?;
+                    let bind = SocketAddr::new(ip, port);
+
+                    if dry_run {
+                        println!(
+                            "would start modelgate-web at http://{bind}/ proxying {}",
+                            client.base_url()
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    if !ip.is_loopback() {
+                        eprintln!(
+                            "warning: binding to {ip} exposes the dashboard to the network. \
+                             modelgate-web has no authentication yet — use 127.0.0.1 unless \
+                             you have separate network controls in place."
+                        );
+                    }
+
+                    if open {
+                        let url = format!("http://{bind}/");
+                        if let Err(e) = open_in_browser(&url) {
+                            eprintln!(
+                                "warning: --open could not launch a browser ({e}); visit {url} manually"
+                            );
+                        }
+                    }
+
+                    println!("starting modelgate-web at http://{bind}/ (Ctrl+C to stop)");
+
+                    let config = modelgate_web::WebServerConfig {
+                        bind,
+                        gate: cfg.clone(),
+                    };
+                    match modelgate_web::serve(config).await {
+                        Ok(()) => Ok(exit_code::SUCCESS),
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            eprintln!(
+                                "remediation: check that port {port} is free (lsof -i :{port}) or pass --port <n>"
+                            );
+                            Ok(exit_code::GENERAL_ERROR)
+                        }
+                    }
+                }
+
+                GateCommands::Test { model, input, json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+
+                    if !input.exists() {
+                        let msg = format!("input file not found: {}", input.display());
+                        if want_json {
+                            let err = serde_json::json!({
+                                "error": "file_not_found",
+                                "message": msg,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&err)?);
+                        } else {
+                            eprintln!("error: {msg}");
+                            eprintln!(
+                                "remediation: check the path is correct and the file is readable, then re-run"
+                            );
+                        }
+                        return Ok(exit_code::GENERAL_ERROR);
+                    }
+
+                    if dry_run {
+                        println!(
+                            "would POST {} -> /api/v1/inference/{}",
+                            input.display(),
+                            model
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    match client.test_inference(&model, &input).await {
+                        Ok(result) => {
+                            if want_json {
+                                println!("{}", serde_json::to_string_pretty(&result)?);
+                            } else {
+                                println!("inference result:");
+                                println!("  model:    {}", result.model);
+                                println!("  latency:  {}ms", result.latency_ms);
+                                if let Some(t) = result.tokens_generated {
+                                    println!("  tokens:   {t}");
+                                }
+                                println!("  output:   {}", serde_json::to_string(&result.output)?);
+                            }
+                            Ok(exit_code::SUCCESS)
+                        }
+                        Err(e) => gate_error_exit(e, "inference_failed", cli.json),
+                    }
+                }
+            }
+        }
+
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "smctl", &mut std::io::stdout());
+            Ok(exit_code::SUCCESS)
+        }
+
+        Commands::Serve {
+            mcp,
+            stdio,
+            sse,
+            port,
+        } => {
+            if !mcp {
+                anyhow::bail!(
+                    "Serve mode not specified. You must choose a server surface. \
+                     Run `smctl serve --mcp --stdio` to start the MCP server on stdio."
+                );
+            }
+
+            if stdio && sse {
+                anyhow::bail!(
+                    "You specified both --stdio and --sse. \
+                     The MCP server binds to exactly one transport per invocation. \
+                     Re-run with only one transport flag."
+                );
+            }
+
+            // Resolve transport. Default to stdio when neither flag is
+            // set; `--sse` flips the switch regardless of `--port`
+            // (which always has a default). `--port` without `--sse` is
+            // silently ignored — the stdio transport has no port.
+            let transport = if sse {
+                let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+                smctl_mcp::Transport::Sse { addr }
+            } else {
+                smctl_mcp::Transport::Stdio
+            };
+
+            // MCP owns stdout on stdio; SSE routes all protocol bytes
+            // over the TCP socket, leaving stdout available. Either way,
+            // route tracing to stderr via the shared subscriber.
+            // `smctl_log::init` is idempotent and is the single owner of
+            // the tracing-subscriber registration
+            // (smctl-mcp-v1/design.md Decision 6).
+            let level = if cli.quiet {
+                smctl_log::LogLevel::Error
+            } else {
+                match cli.verbose {
+                    0 => smctl_log::LogLevel::Info,
+                    1 => smctl_log::LogLevel::Debug,
+                    _ => smctl_log::LogLevel::Trace,
+                }
+            };
+            let config = smctl_log::LoggingConfig {
+                level,
+                stderr: true,
+                file: cli.log_file.clone(),
+                ..Default::default()
+            };
+            smctl_log::init(&config).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let root = resolve_root()?;
+            smctl_mcp::start_server(root, transport).await?;
             Ok(exit_code::SUCCESS)
         }
 
@@ -1227,7 +2640,7 @@ async fn run(cli: Cli) -> Result<i32> {
             if report.all_passed {
                 println!("build passed");
             } else {
-                println!("build FAILED");
+                println!("build failed");
             }
             if report.all_passed {
                 Ok(exit_code::SUCCESS)

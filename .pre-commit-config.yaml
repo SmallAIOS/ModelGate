@@ -1,0 +1,81 @@
+# Pre-commit hooks for ModelGate.
+#
+# Install once per clone:
+#     pre-commit install --install-hooks
+#     pre-commit install --hook-type pre-push
+#
+# After that, `git commit` runs the fast set (formatter + whitespace +
+# YAML lint) and `git push` runs the heavier set that mirrors the
+# Rust CI jobs (clippy, workspace tests, frontend typecheck + vitest).
+#
+# To bypass once when you know what you're doing:
+#     git commit --no-verify
+# Bypass the pre-push gate the same way:
+#     git push --no-verify
+#
+# Mirrors what GitHub Actions does. If a hook here passes, CI almost
+# always passes too — and any divergence is a CI bug worth fixing.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.svg$'
+      - id: end-of-file-fixer
+        exclude: '\.svg$'
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+
+  # Rust — keep these as `language: system` so we use the same
+  # cargo + rustfmt + clippy the developer (and CI) already have.
+  # Avoids pulling a stale third-party Rust pre-commit repo.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Verify Rust formatting (read-only, run `cargo fmt --all` to apply)
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Workspace-wide clippy with -D warnings (mirrors CI)
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        # Pre-push only — too slow for every commit.
+        stages: [pre-push]
+
+      - id: cargo-test
+        name: cargo test --workspace
+        description: Run the workspace test suite (mirrors CI)
+        entry: cargo test --workspace
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: frontend-typecheck
+        name: frontend typecheck
+        description: tsc --noEmit in ui/modelgate-web (only when frontend files change)
+        entry: bash -c 'cd ui/modelgate-web && npm run typecheck'
+        language: system
+        files: '^ui/modelgate-web/.*\.(ts|tsx|json)$'
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: frontend-test
+        name: frontend test
+        description: vitest run in ui/modelgate-web (only when frontend files change)
+        entry: bash -c 'cd ui/modelgate-web && npm test'
+        language: system
+        files: '^ui/modelgate-web/.*\.(ts|tsx|json)$'
+        pass_filenames: false
+        stages: [pre-push]

@@ -53,3 +53,22 @@ Specs live in `openspec/changes/<name>/` with: `.openspec.yaml`, `proposal.md`, 
 - `.local/` — AI-generated scratch, temp files, things not for git. Listed in .gitignore.
 - All Rust code follows `cargo fmt` and `cargo clippy -D warnings`.
 - Feature branches map 1:1 with OpenSpec changes.
+
+## Design system
+
+User-facing copy (CLI output, error messages, docs, any future web UI) follows the SmallAIOS design system declared in `openspec/changes/design-system-v1/specs/design-system.md`. The reference artifacts (tokens, voice rules, iconography, logo proposals) live in `ui/`.
+
+Key rules, applied reflexively:
+
+- **Voice:** address the operator as `you`, never `we`. Sentence case for labels. Imperative verbs on buttons (`Start build`, not `Building…`). No emoji. No exclamation points.
+- **Status vocabulary:** reuse canonical terms — `clean`/`dirty`, `ahead N`/`behind N`, `pending`/`running`/`passed`/`failed`, `active`/`archived`, `verified`/`unverified`, `present`/`absent`. New terms require updating the spec first.
+- **Error messages:** three parts — what happened, what it means, what to do next (an executable command).
+- **Product names:** `SmallAIOS`, `ModelGate`, `smctl` cased exactly. `smctl` stays lowercase; reword rather than capitalize at sentence start.
+
+Claude Code users: the `smallaios-design` skill at `.claude/skills/smallaios-design/` loads these rules automatically. Invoke it when designing or styling any surface.
+
+The production web dashboard lives in two places: the Rust server at [`modelgate-web/`](modelgate-web/) (Axum + `/api/*` proxy) and the React SPA at [`ui/modelgate-web/`](ui/modelgate-web/) (Vite + TypeScript). Voice rules apply to every string in both. The designer-authored mockup at [`ui/ui_kits/modelgate_web/`](ui/ui_kits/modelgate_web/) is the reference kit; the live app diverges as real data lands.
+
+## Logging
+
+All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The canonical MSGID catalog and severity-mapping table live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that document is authoritative for any new MSGID allocation, facility choice, or transport change.

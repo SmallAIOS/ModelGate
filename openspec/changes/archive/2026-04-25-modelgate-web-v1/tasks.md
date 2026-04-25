@@ -1,0 +1,87 @@
+# ModelGate web — Tasks
+
+Ordered so each block lands as one commit. Plan of record — ticked as work lands.
+
+## Prep
+
+- [x] Decide: block this change on `smctl-gate-v1` merging to develop, or rebase when it lands — resolved: smctl-gate-v1 landed as PR #10 (commit b778d3a) on 2026-04-24; branch rebased
+- [x] Reserve MSGID range `SMCTL-0301..0399` for `modelgate-web` — range documented in smctl-log/src/msgid.rs; logging.md update will land with a broader catalog refresh
+
+## Crate Setup
+
+- [x] Create `modelgate-web/` crate with Cargo.toml (axum, tower-http deps) — `include_dir` deferred to the "embed the built bundle" task in Axum Server
+- [x] Add `modelgate-web` as workspace member in root Cargo.toml
+- [x] Add `smctl-gate` dependency (the crate reuses `GateClient`)
+- [x] `cargo build --workspace` passes — stub `_ping` route + two passing tests ship the vertical
+
+## Frontend Scaffold
+
+- [x] Hand-scaffold `ui/modelgate-web/` (Vite + React + TS) — chose hand-scaffold over `npm create` for deterministic output
+- [x] Add `react`, `react-dom`, `lucide-react`, `@tanstack/react-query`, `typescript`
+- [x] Copy `ui/colors_and_type.css` → `ui/modelgate-web/src/styles.css`
+- [ ] Port `ui/ui_kits/modelgate_web/Shell.jsx` → `src/Shell.tsx` — consolidated into App.tsx for v1; split when components warrant it
+- [ ] Port `ui/ui_kits/modelgate_web/Screens.jsx` → `src/Screens.tsx` — consolidated into App.tsx for v1
+- [x] Port `ui/ui_kits/modelgate_web/App.jsx` → `src/App.tsx` (hash-router)
+- [ ] Extract inline icons to `src/components/Icon.tsx` using `lucide-react` — deferred until we add icons
+- [x] `npm run typecheck` passes
+
+## API Client
+
+- [x] `src/api.ts` declares `HealthStatus`, `Model`, `Route`, `LogEntry`, `GateApi`
+- [x] Implement `health()`, `listModels()`, `listRoutes()` + mutating methods (remove, setRoute, testInference)
+- [x] `GateApiError` class with `{ kind, status, body }`
+- [x] `useHealth`, `useModels`, `useRoutes` hooks backed by React Query — inline via `useQuery` per screen; extract if they sprout params
+
+## Wire Screens to Data
+
+- [x] `OverviewScreen` reads `useHealth()` + `useModels()` for counts
+- [x] `ModelsScreen` reads `useModels()`; register / remove actions deferred to follow-up commit
+- [x] `PolicyScreen` renders "not yet available" state — blocked on ModelGate policy endpoint
+- [x] `TerminalScreen` renders "open in terminal" CTA that links to `smctl gate logs` — embedded xterm.js deferred to follow-up change
+
+## Axum Server
+
+- [x] `modelgate-web/src/lib.rs` — Axum app builder with `/` static + `/api/*` routes — `/api/*` fully wired (GET health/models/routes, POST models/inference, PUT routes, DELETE models/:name, GET logs SSE); static `/` pending
+- [x] `modelgate-web/src/proxy.rs` — handlers call `smctl_gate::GateClient` and serialize results — kept inline in lib.rs; file is small enough that a split costs more than it saves
+- [x] Error mapping: `GateError` → HTTP status + JSON body per `specs/web-server.md`
+- [x] `include_dir!("../ui/modelgate-web/dist")` embeds the SPA — fallback serves `index.html` for non-asset paths so hash routing survives reloads; unmatched `/api/*` returns JSON 404 instead of leaking the shell
+- [x] `build.rs` fails with a helpful message when `dist/` is missing (points at `npm run build`)
+
+## CLI Integration
+
+- [x] Add `GateCommands::Web { host, port, open }` to smctl — `--dev` deferred to a follow-up task block once the frontend dev server exists
+- [x] Wire dispatch: build `WebServerConfig`, call `modelgate_web::serve`
+- [x] `--open` launches the default browser via a hand-rolled platform opener (`open` / `xdg-open` / `cmd /c start`) — no new dep
+- [ ] `--dev` reserved flag — deferred until frontend scaffold lands
+
+## Logging
+
+- [x] Reserve SMCTL-0301..0304 in the logging catalog (see Prep)
+- [x] Emit `SMCTL-0301` on server start, `SMCTL-0302` on graceful shutdown
+- [x] Emit `SMCTL-0303` / `SMCTL-0304` on proxy upstream failures
+
+## Integration Testing
+
+- [x] Rust: axum test harness asserts `/api/health` returns 200 when a wiremock upstream replies 200, and 502 when the upstream is unreachable — also covers 504 on timeout and upstream 5xx passthrough
+- [x] Rust: assert `/api/models/:name` DELETE returns 404 when upstream returns 404
+- [x] Rust: assert `/api/logs` streams SSE frames through unchanged
+- [ ] Frontend: Vitest covers `api.ts` success + error parsing against a mocked `fetch`
+
+## Voice / Design
+
+- [x] Every string in `src/` passes a manual voice-rule review per `design-system-v1` — empty states reuse CLI vocab ("No models registered", "No routes configured"), headings are sentence case, no emoji, no exclamation points
+- [x] Accessibility pass: every interactive element is `<button type="button">`; no divs with click handlers; tables use `<table>`/`<thead>`/`<tbody>` — command palette deferred (not in v1 shell)
+- [x] `ui/ui_kits/modelgate_web/README.md` updated to note the production app is now at `ui/modelgate-web/`
+
+## Docs
+
+- [x] Add "Web UI" section to repo README pointing at `smctl gate web`
+- [x] Update `CLAUDE.md` Design System section to note the web app location
+
+## Verify
+
+- [x] `cargo build --workspace` passes
+- [x] `cargo test --workspace` passes — 201 tests across the workspace
+- [x] `cargo clippy --workspace -- -D warnings` stays clean
+- [x] `npm run build` in `ui/modelgate-web/` produces a `dist/` under the 2 MB budget — 700K (187 KB JS, 4 KB CSS, the rest sourcemaps)
+- [ ] `smctl gate web --open` boots, renders Overview, and shows real counts from a running ModelGate — manual smoke test, pending a running ModelGate. Dry-run path verified; the 502 "upstream_unreachable" state is covered by proxy_get_test.rs

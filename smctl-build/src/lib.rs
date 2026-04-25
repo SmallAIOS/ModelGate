@@ -24,6 +24,33 @@ pub struct BuildReport {
     pub all_passed: bool,
 }
 
+/// Resolve the set of repos to build for a single-repo selection,
+/// in topological order.
+///
+/// When `repo_name` is `None` this is the same as
+/// [`resolve_build_order`]. When set, the result is the named repo
+/// plus its transitive dependencies, in the same topological order
+/// the full graph would produce.
+pub fn resolve_build_subset<'a>(
+    manifest: &'a WorkspaceManifest,
+    repo_name: Option<&str>,
+) -> Result<Vec<&'a RepoConfig>> {
+    let order = resolve_build_order(manifest)?;
+    let Some(name) = repo_name else {
+        return Ok(order);
+    };
+    manifest.find_repo(name).with_context(|| {
+        format!(
+            "repo '{name}' not found. It is not registered in the workspace manifest, so smctl cannot plan the build. Run `smctl workspace status` to see registered repos, or add it with `smctl workspace add <url> --name {name}`."
+        )
+    })?;
+    let deps = collect_deps(manifest, name);
+    Ok(order
+        .into_iter()
+        .filter(|r| r.name == name || deps.contains(&r.name))
+        .collect())
+}
+
 /// Resolve build order from dependency graph (topological sort).
 pub fn resolve_build_order(manifest: &WorkspaceManifest) -> Result<Vec<&RepoConfig>> {
     let repos = &manifest.repos;
@@ -134,21 +161,7 @@ fn build_inner(
         return build_parallel_impl(root, manifest, repo_name, run_tests, clean_first, start);
     }
 
-    let build_order = resolve_build_order(manifest)?;
-
-    let repos_to_build: Vec<_> = match repo_name {
-        Some(name) => {
-            let _target = manifest
-                .find_repo(name)
-                .with_context(|| format!("repo '{name}' not found"))?;
-            let deps = collect_deps(manifest, name);
-            build_order
-                .into_iter()
-                .filter(|r| r.name == name || deps.contains(&r.name))
-                .collect()
-        }
-        None => build_order,
-    };
+    let repos_to_build = resolve_build_subset(manifest, repo_name)?;
 
     let mut results = Vec::new();
     for repo in &repos_to_build {
@@ -312,7 +325,11 @@ fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
     let repo_path = root.join(repo.local_path());
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
-        anyhow::bail!("empty command");
+        anyhow::bail!(
+            "empty command for repo '{}'. There is no shell invocation to run, so the build step cannot proceed. Set a non-empty `build_cmd` for this repo in `.smctl/workspace.toml`, or remove the repo with `smctl workspace remove {}`.",
+            repo.name,
+            repo.name
+        );
     }
 
     let output = Command::new(parts[0])
@@ -324,11 +341,16 @@ fn run_cmd(root: &Path, repo: &RepoConfig, cmd: &str) -> Result<String> {
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr_first_line = stderr.lines().next().unwrap_or("").trim();
+        let stderr_hint = if stderr_first_line.is_empty() {
+            String::new()
+        } else {
+            format!(" First stderr line: {stderr_first_line}")
+        };
         anyhow::bail!(
-            "{}: command '{}' failed:\n{}",
-            repo.name,
-            cmd,
-            String::from_utf8_lossy(&output.stderr)
+            "command '{cmd}' failed in repo '{}'. The build step did not complete; any downstream steps are skipped. Re-run the command directly in the repo directory to see full output.{stderr_hint}",
+            repo.name
         );
     }
 }
@@ -419,6 +441,47 @@ mod tests {
         let deps = collect_deps(&manifest, "C");
         assert!(deps.contains(&"A".to_string()));
         assert!(deps.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_build_subset_full() {
+        // None means "everything in topological order".
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, None).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_target_with_transitive_deps() {
+        // Asking for C should pull in A (B's dep) and B (C's dep) in
+        // topological order — the named repo PLUS its transitive deps.
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, Some("C")).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_leaf_repo() {
+        // Asking for A (no deps) should produce just [A]. This is the
+        // exact regression Phase 5 of the smallaios-integration-v1
+        // shakedown caught: the old dry-run path returned the full
+        // build order regardless of the filter.
+        let manifest = make_manifest();
+        let order = resolve_build_subset(&manifest, Some("A")).unwrap();
+        let names: Vec<_> = order.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["A"]);
+    }
+
+    #[test]
+    fn test_resolve_build_subset_unknown_repo() {
+        let manifest = make_manifest();
+        let err = resolve_build_subset(&manifest, Some("does-not-exist")).unwrap_err();
+        assert!(
+            err.to_string().contains("does-not-exist"),
+            "error should cite the missing repo: {err}"
+        );
     }
 
     #[test]

@@ -37,7 +37,10 @@ pub struct ValidationResult {
 pub fn new_spec(openspec_dir: &Path, name: &str) -> Result<SpecInfo> {
     let spec_dir = openspec_dir.join("changes").join(name);
     if spec_dir.exists() {
-        anyhow::bail!("spec '{name}' already exists at {}", spec_dir.display());
+        anyhow::bail!(
+            "spec '{name}' already exists at {}. The create was rejected to avoid overwriting existing scaffolds. Run `smctl spec archive {name}` to retire the existing spec, or choose a different name.",
+            spec_dir.display()
+        );
     }
 
     std::fs::create_dir_all(spec_dir.join("specs")).context("failed to create spec directories")?;
@@ -165,7 +168,9 @@ pub fn spec_info(openspec_dir: &Path, name: &str) -> Result<SpecInfo> {
                 }
             }
         }
-        anyhow::bail!("spec '{name}' not found");
+        anyhow::bail!(
+            "spec '{name}' not found. No active or archived spec matches that name. Run `smctl spec list` to see existing specs, or `smctl spec new {name}` to create it."
+        );
     }
 
     let phase = if spec_dir.join("tasks.md").exists() {
@@ -186,7 +191,9 @@ pub fn spec_info(openspec_dir: &Path, name: &str) -> Result<SpecInfo> {
 pub fn validate(openspec_dir: &Path, name: &str) -> Result<ValidationResult> {
     let spec_dir = openspec_dir.join("changes").join(name);
     if !spec_dir.exists() {
-        anyhow::bail!("spec '{name}' not found");
+        anyhow::bail!(
+            "spec '{name}' not found. Validation has no spec folder to inspect. Run `smctl spec list` to see existing specs, or `smctl spec new {name}` to create it."
+        );
     }
 
     let mut issues = Vec::new();
@@ -278,7 +285,9 @@ pub fn list_specs(openspec_dir: &Path) -> Result<Vec<SpecInfo>> {
 pub fn archive(openspec_dir: &Path, name: &str) -> Result<PathBuf> {
     let spec_dir = openspec_dir.join("changes").join(name);
     if !spec_dir.exists() {
-        anyhow::bail!("spec '{name}' not found");
+        anyhow::bail!(
+            "spec '{name}' not found. Archive has no active spec to move. Run `smctl spec list` to see existing specs."
+        );
     }
 
     let archive_dir = openspec_dir.join("changes").join("archive");

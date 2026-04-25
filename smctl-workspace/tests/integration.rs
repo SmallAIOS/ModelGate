@@ -5,14 +5,44 @@ use std::path::Path;
 use smctl_workspace::worktree;
 use smctl_workspace::{WorkspaceManifest, add_repo, init_workspace, remove_repo, repo_status};
 
+/// Initialize a git repo at `repo_path` with `main` as the default branch and
+/// `user.email`/`user.name` configured locally. Makes library-internal git
+/// operations (merge, commit) work on CI runners that have no global
+/// gitconfig. `init.defaultBranch=main` keeps git from creating a stray
+/// `master` before `checkout -b main`.
+fn init_repo(repo_path: &Path) {
+    let cmds: &[&[&str]] = &[
+        &["git", "-c", "init.defaultBranch=main", "init"],
+        &["git", "config", "user.email", "test@test.com"],
+        &["git", "config", "user.name", "Test"],
+    ];
+    for cmd in cmds {
+        let output = std::process::Command::new(cmd[0])
+            .args(&cmd[1..])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} failed: {}",
+            cmd.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 /// Create a bare git repo and a clone of it within the workspace root.
 fn setup_git_repo(root: &Path, name: &str) -> String {
     let bare_dir = root.join(format!("{name}.git"));
     std::fs::create_dir_all(&bare_dir).unwrap();
 
-    // Init bare repo
+    // Init bare repo with `main` as the default branch. Without this override
+    // the bare's unborn HEAD resolves to whatever the host's `init.defaultBranch`
+    // is — `master` on most CI runners — which means the later clone inherits
+    // `master`, the initial commit lands on `master`, and `git push origin main`
+    // then fails with "src refspec main does not match any".
     let output = std::process::Command::new("git")
-        .args(["init", "--bare"])
+        .args(["-c", "init.defaultBranch=main", "init", "--bare"])
         .current_dir(&bare_dir)
         .output()
         .unwrap();
@@ -33,8 +63,28 @@ fn setup_git_repo(root: &Path, name: &str) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Create initial commit so HEAD exists
+    // Configure user.email / user.name locally on the clone. The commit below
+    // also passes them via `-c` for belt-and-suspenders, but local config
+    // lets any library-internal git invocations inherit them too.
     let repo_path = root.join(name);
+    for cmd in &[
+        &["git", "config", "user.email", "test@test.com"][..],
+        &["git", "config", "user.name", "Test"][..],
+    ] {
+        let output = std::process::Command::new(cmd[0])
+            .args(&cmd[1..])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} failed: {}",
+            cmd.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Create initial commit so HEAD exists
     std::fs::write(repo_path.join("README.md"), "# Test\n").unwrap();
 
     let cmds: &[&[&str]] = &[
@@ -174,15 +224,7 @@ fn test_workspace_manifest_roundtrip_with_all_configs() {
 fn setup_worktree_workspace(root: &Path) -> WorkspaceManifest {
     let repo_path = root.join("my-repo");
     std::fs::create_dir_all(&repo_path).unwrap();
-
-    let cmds: &[&[&str]] = &[&["git", "init"], &["git", "checkout", "-b", "main"]];
-    for cmd in cmds {
-        std::process::Command::new(cmd[0])
-            .args(&cmd[1..])
-            .current_dir(&repo_path)
-            .output()
-            .unwrap();
-    }
+    init_repo(&repo_path);
 
     std::fs::write(repo_path.join("README.md"), "# Test\n").unwrap();
     let cmds: &[&[&str]] = &[

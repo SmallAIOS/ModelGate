@@ -1,5 +1,9 @@
 # ModelGate
 
+[![CI](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/SmallAIOS/ModelGate/branch/develop/graph/badge.svg)](https://codecov.io/gh/SmallAIOS/ModelGate)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=SmallAIOS_ModelGate&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=SmallAIOS_ModelGate)
+
 **smctl** (SmallAIOS Control) is a unified CLI for managing multi-repo workspaces, git flow branching, spec-driven development, and dependency-ordered builds.
 
 ## Installation
@@ -12,6 +16,16 @@ cargo install --path smctl
 ```
 
 Requires Rust 2024 edition (1.85+).
+
+### Pre-commit hooks (recommended)
+
+```bash
+brew install pre-commit          # if not already on PATH
+pre-commit install --install-hooks
+pre-commit install --hook-type pre-push
+```
+
+`git commit` then runs the fast set (formatter + whitespace + YAML) and `git push` runs the heavier set that mirrors CI (clippy, workspace tests, frontend typecheck and vitest). Bypass once with `--no-verify` if you genuinely know what you're doing.
 
 ## Quickstart
 
@@ -68,6 +82,13 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `spec list` | List all specs (active + archived) |
 | `spec archive` | Move spec to archive + finish feature branch |
 | `build` | Build repos in dependency order |
+| `quality audit/deps/unsafe/dsm/complexity` | Engineering-quality checks |
+| `gate status` | Show health and summary metadata of a running ModelGate instance |
+| `gate models list/add/remove` | Inspect and manage registered models |
+| `gate routes list/set` | Inspect and configure the inference routing table |
+| `gate test <model> --input <file>` | Run a test inference against a model |
+| `gate logs [--follow]` | Stream ModelGate logs (Ctrl+C to exit) |
+| `gate web [--host] [--port] [--open]` | Start the ModelGate dashboard in a browser |
 | `config show/set/get` | Configuration management |
 | `completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
@@ -90,6 +111,9 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `-v, --verbose` | Increase verbosity (repeatable: -v, -vv, -vvv) |
 | `-q, --quiet` | Suppress non-error output |
 | `--no-color` | Disable colored output |
+| `--log-level <LEVEL>` | `error` / `warn` / `info` / `debug` / `trace` (also `SMCTL_LOG_LEVEL`) |
+| `--log-file <PATH>` | Append RFC 5424 events to a file (also `SMCTL_LOG_FILE`) |
+| `--log-syslog` | Emit to local syslog Unix socket, Unix only (also `SMCTL_LOG_SYSLOG`) |
 
 ## workspace.toml Reference
 
@@ -130,17 +154,63 @@ base_dir = ".worktrees"       # default: ".worktrees"
 
 [spec]
 openspec_dir = "openspec"     # default: "openspec"
+
+[logging]
+transports = ["stderr"]       # any of "stderr", "file", "syslog"
+file = "/var/log/smctl.log"   # only used when "file" is in transports
+facility = "local0"           # local0..local7 or daemon
+level = "info"                # error / warn / info / debug / trace
 ```
 
 ## Architecture
 
-5-crate Cargo workspace:
+6-crate Cargo workspace:
 
 - **smctl** — CLI binary (clap derive, subcommand dispatch)
 - **smctl-workspace** — workspace manifest, repo status, worktree management
 - **smctl-flow** — git flow branching (feature, release, hotfix lifecycle)
 - **smctl-spec** — OpenSpec workflow (scaffold, validate, archive)
 - **smctl-build** — dependency-ordered build orchestration
+- **smctl-log** — RFC 5424 tracing subscriber and MSGID catalog
+- **smctl-mcp** — MCP server exposing smctl tools and resources to AI agents
+- **smctl-quality** — engineering-quality checks (audit, deps, unsafe, dsm, complexity)
+- **smctl-gate** — ModelGate control-plane client (status, models, routes, inference, logs)
+- **modelgate-web** — Axum server serving the React dashboard SPA plus a JSON/SSE proxy to ModelGate
+
+## Logging
+
+All `smctl` log events conform to [RFC 5424](https://datatracker.ietf.org/doc/html/rfc5424) (The Syslog Protocol). The `smctl-log` crate owns the subscriber, the wire format, and the MSGID catalog; every other crate uses the `tracing` macros and inherits the format.
+
+Three transports are available and can run together:
+
+- **stderr** (default) — RFC 5424 lines to `std::io::stderr`
+- **file** — set via `--log-file <path>` or `SMCTL_LOG_FILE`; append-only, creates parent directories
+- **syslog** — set via `--log-syslog` or `SMCTL_LOG_SYSLOG`; local Unix socket (`/dev/log` on Linux, `/var/run/syslog` on macOS). Unsupported on Windows — the flag warns and falls back to stderr. On open-failure the subscriber emits one `SMCTL-0099` warning and continues on stderr.
+
+The level is set with `--log-level <error|warn|info|debug|trace>` or `SMCTL_LOG_LEVEL`; `-v` / `-vv` bump up, `-q` / `-qq` bump down. Defaults applied in precedence order: CLI flags, then env vars, then `[logging]` in `workspace.toml`, then built-in defaults (stderr only, info level, `local0` facility).
+
+The canonical MSGID catalog (`SMCTL-0001` through `SMCTL-0099`) lives in [`openspec/changes/smctl-logging-v1/specs/logging.md`](openspec/changes/smctl-logging-v1/specs/logging.md) — that document is the authoritative wire-format contract.
+
+## Web UI
+
+`smctl gate web` starts a local dashboard served by the [`modelgate-web`](modelgate-web/) crate. The server embeds a React SPA (built from [`ui/modelgate-web/`](ui/modelgate-web/)) and exposes a JSON + SSE proxy at `/api/*` that fronts the same ModelGate instance `smctl gate` already talks to.
+
+```bash
+smctl gate web --open        # bind 127.0.0.1:9378 and launch the default browser
+smctl gate web --port 9400   # use a different port
+```
+
+The dashboard mirrors the CLI surface: Overview reads `/api/health`, Models reads `/api/models`, Policy and Terminal render placeholder states until the upstream endpoints ship. For frontend development run `npm run dev` in `ui/modelgate-web/` side-by-side with `smctl gate web` — Vite proxies `/api/*` to `127.0.0.1:9378` on port `5173`.
+
+The default bind is `127.0.0.1`. Non-loopback binds emit a warning because there is no authentication layer yet.
+
+## Design system
+
+The canonical design source for SmallAIOS / ModelGate / `smctl` surfaces — CLI output, docs, slides, future web UI — lives in [`ui/`](ui/). Start with [`ui/README.md`](ui/README.md) for voice, tokens, iconography, and brand rules. The contract form is declared in [`openspec/changes/design-system-v1/specs/design-system.md`](openspec/changes/design-system-v1/specs/design-system.md); when the two disagree, the spec wins.
+
+Contributors using Claude Code auto-load the rules via the `smallaios-design` skill at [`.claude/skills/smallaios-design/`](.claude/skills/smallaios-design/).
+
+Fonts (IBM Plex Sans, JetBrains Mono), the logo marks in `ui/assets/`, and the Lucide icon set are all adopted as **placeholders** — superseded by future `design-system-v2`, `brand-v1`, and bespoke-icon changes respectively.
 
 ## License
 

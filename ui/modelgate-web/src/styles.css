@@ -1,0 +1,451 @@
+/* =============================================================================
+   SmallAIOS Design System — Foundations
+   Colors, type, spacing, shadow, radius, motion.
+   Import once at the root of any page or HTML artifact.
+   ============================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* --- Neutrals (light) ------------------------------------------------------ */
+  --bg-0:  #F7F7F5;   /* canvas */
+  --bg-1:  #FFFFFF;   /* card / surface */
+  --bg-2:  #EFEFEC;   /* raised row / hover */
+  --bg-3:  #E4E4DF;   /* pressed / selected */
+
+  --fg-0:  #0B0C0E;   /* primary text, ink */
+  --fg-1:  #2A2D33;   /* secondary text */
+  --fg-2:  #6A6E78;   /* tertiary text / muted */
+  --fg-3:  #C7C9CE;   /* borders / dividers */
+  --fg-4:  #E7E8EB;   /* subtle rules */
+
+  /* --- Signal (status) ------------------------------------------------------- */
+  --sig-ok:    #1F8F4E;   /* verified, online, passed */
+  --sig-ok-bg: #E6F4EC;
+  --sig-warn:  #B7791F;   /* warning, pending */
+  --sig-warn-bg:#FBF3E2;
+  --sig-err:   #B01E2B;   /* failed, destructive */
+  --sig-err-bg:#F8E5E7;
+  --sig-info:  #1E4FB0;
+  --sig-info-bg:#E6ECF8;
+
+  /* --- Spot color ------------------------------------------------------------ */
+  --ion:     #3451FF;   /* active / focus / primary action */
+  --ion-2:   #1E34C8;   /* pressed */
+  --ion-bg:  #E9ECFF;   /* tinted row */
+
+  /* --- Type scale ------------------------------------------------------------ */
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-xs:   12px;
+  --fs-sm:   13px;
+  --fs-base: 14px;
+  --fs-md:   16px;
+  --fs-lg:   20px;
+  --fs-xl:   28px;
+  --fs-2xl:  40px;
+
+  --lh-tight: 1.2;
+  --lh-body:  1.5;
+  --lh-loose: 1.65;
+
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+
+  --tracking-tight: -0.01em;
+  --tracking-caps:   0.08em;
+
+  /* --- Spacing (4/8 grid) ---------------------------------------------------- */
+  --space-0:   0;
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+
+  /* --- Radii ---------------------------------------------------------------- */
+  --radius-0: 0;
+  --radius-1: 4px;
+  --radius-2: 6px;
+  --radius-3: 8px;
+  --radius-pill: 999px;
+
+  /* --- Shadows (tight, cool, 2 elevations) ---------------------------------- */
+  --shadow-1:
+    0 0 0 1px rgba(11,12,14,0.06),
+    0 1px 2px rgba(11,12,14,0.06),
+    0 4px 8px rgba(11,12,14,0.04);
+  --shadow-2:
+    0 0 0 1px rgba(11,12,14,0.08),
+    0 2px 4px rgba(11,12,14,0.08),
+    0 16px 24px rgba(11,12,14,0.08);
+
+  /* --- Motion --------------------------------------------------------------- */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-micro: 120ms;
+  --dur-base:  200ms;
+  --dur-large: 320ms;
+
+  /* --- Protection gradient --------------------------------------------------- */
+  --protect-gradient: linear-gradient(to bottom, rgba(255,255,255,0.92), rgba(255,255,255,0));
+
+  /* --- Semantic mappings (use these over raw tokens in components) ---------- */
+  --color-canvas:       var(--bg-0);
+  --color-surface:      var(--bg-1);
+  --color-surface-hover:var(--bg-2);
+  --color-border:       var(--fg-3);
+  --color-border-soft:  var(--fg-4);
+  --color-text:         var(--fg-0);
+  --color-text-muted:   var(--fg-2);
+  --color-link:         var(--ion);
+
+  /* --- Semantic type roles (use as classes below) --------------------------- */
+}
+
+/* Dark mode --------------------------------------------------------------- */
+:root[data-theme="dark"],
+.dark {
+  --bg-0:  #0B0C0E;
+  --bg-1:  #131418;
+  --bg-2:  #1B1D22;
+  --bg-3:  #262930;
+
+  --fg-0:  #F3F4F6;
+  --fg-1:  #C7CAD1;
+  --fg-2:  #8A8F99;
+  --fg-3:  #2E3139;
+  --fg-4:  #1E2026;
+
+  --sig-ok:    #3BCB72;
+  --sig-ok-bg: #0E2A1A;
+  --sig-warn:  #E0A64A;
+  --sig-warn-bg:#2A2011;
+  --sig-err:   #E56372;
+  --sig-err-bg:#2A1115;
+  --sig-info:  #6E8FF0;
+  --sig-info-bg:#121A2E;
+
+  --ion:    #6E83FF;
+  --ion-2:  #8A9BFF;
+  --ion-bg: #1A1E3D;
+
+  --shadow-1:
+    0 0 0 1px rgba(0,0,0,0.6),
+    0 1px 2px rgba(0,0,0,0.5),
+    0 4px 8px rgba(0,0,0,0.4);
+  --shadow-2:
+    0 0 0 1px rgba(0,0,0,0.7),
+    0 2px 4px rgba(0,0,0,0.6),
+    0 16px 24px rgba(0,0,0,0.6);
+
+  --protect-gradient: linear-gradient(to bottom, rgba(11,12,14,0.92), rgba(11,12,14,0));
+}
+
+/* =============================================================================
+   Semantic type roles
+   ============================================================================= */
+.ds-display {
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xl);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-0);
+}
+.ds-h1 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xl);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-0);
+}
+.ds-h2 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  line-height: 1.3;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-0);
+}
+.ds-h3 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  font-weight: var(--fw-semibold);
+  color: var(--fg-0);
+}
+.ds-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-regular);
+  color: var(--fg-1);
+}
+.ds-small {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.ds-caption {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--fg-2);
+}
+.ds-label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.ds-code,
+.ds-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.ds-mono-lg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.ds-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-1);
+  color: var(--fg-1);
+}
+
+/* Global base reset tailored for design-system pages */
+.ds-root {
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Dashboard chrome additions (modelgate-web-actions-v1) === */
+
+/* Toaster — bottom-right anchored region announced via aria-live */
+.toaster {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 360px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-1);
+  border: 1px solid var(--fg-3);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast--success { border-color: var(--ok-1); }
+.toast--error   { border-color: var(--alert-1); }
+.toast__message { font-weight: 600; }
+.toast__detail  { color: var(--fg-2); font-size: var(--fs-xs); }
+
+/* Confirm dialog */
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.dialog {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-4);
+  width: min(480px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+}
+.dialog__title { margin: 0; font-size: var(--fs-lg); }
+.dialog__body { color: var(--fg-1); font-size: var(--fs-sm); }
+.dialog__cli {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow-x: auto;
+}
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 12px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary {
+  background: var(--accent-1, var(--fg-0));
+  color: var(--bg-0);
+  border-color: var(--accent-1, var(--fg-0));
+}
+.btn--destructive {
+  background: var(--alert-1);
+  color: var(--bg-0);
+  border-color: var(--alert-1);
+}
+
+/* Panel header — used for screens that need a heading + action button row */
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.panel__header h2 { margin: 0; }
+
+/* Progress bar — used by the upload dialog */
+.progress {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  background: var(--accent-1, var(--fg-0));
+  transition: width 80ms linear;
+}
+
+/* Forms — used by RoutesScreen Set route + InferenceScreen */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-1);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+}
+.form__row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.form__row > span { color: var(--fg-1); }
+.form__row input,
+.form__row select {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 8px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+.form__row input:disabled,
+.form__row select:disabled { opacity: 0.6; }
+.form__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* Inference screen — two-column input/result layout */
+.inference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.inference__input,
+.inference__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.inference__output {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow: auto;
+}
+
+/* JSON editor */
+.json-editor { display: flex; flex-direction: column; gap: 4px; }
+.json-editor__textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: var(--space-2);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  resize: vertical;
+}
+.json-editor__textarea--invalid { border-color: var(--alert-1); }
+.json-editor__error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--alert-1);
+  font-family: var(--font-mono);
+}

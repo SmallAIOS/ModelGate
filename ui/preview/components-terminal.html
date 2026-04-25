@@ -1,0 +1,25 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;padding:0;background:#0B0C0E;}
+  .card{padding:16px 20px;font-family:var(--font-mono);font-size:13px;color:#F3F4F6;line-height:1.55;}
+  .p{color:#8A8F99;}
+  .c{color:#6E83FF;}
+  .ok{color:#3BCB72;}
+  .err{color:#E56372;}
+  .w{color:#E0A64A;}
+  .d{color:#C7CAD1;}
+  .caret{display:inline-block;width:7px;height:15px;background:#3BCB72;vertical-align:-3px;animation:blink 1s steps(2) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+</style></head>
+<body>
+<div class="card">
+<span class="p">e@airgap</span> <span class="c">~/work/smallaios</span> <span class="p">$</span> smctl workspace status<br>
+<span class="d">├─</span> SmallAIOS   <span class="c">develop</span>   <span class="ok">✓ clean</span>    <span class="p">+3/-0</span><br>
+<span class="d">├─</span> ModelGate   <span class="c">develop</span>   <span class="err">✗ dirty</span>    <span class="p">2 files</span><br>
+<span class="d">└─</span> last sync   <span class="p">14:02:31Z</span><br>
+<span class="p">e@airgap</span> <span class="c">~/work/smallaios</span> <span class="p">$</span> smctl spec ff gpu-accel<br>
+<span class="w">!</span> proposal.md   <span class="p">missing "Impact" section</span><br>
+<span class="ok">✓</span> design.md     <span class="p">12 decisions, 3 open questions</span><br>
+<span class="ok">✓</span> tasks.md      <span class="p">14/28 tasks complete</span><span class="caret"></span>
+</div>
+</body></html>
