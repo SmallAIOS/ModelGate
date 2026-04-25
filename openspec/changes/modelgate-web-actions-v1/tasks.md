@@ -10,8 +10,8 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## API Client
 
-- [ ] Add `registerModel(file: File): Promise<Model>` to `src/api.ts` — multipart via `fetch`, surfaces `GateApiError` for non-2xx.
-- [ ] (Existing methods stay — `removeModel`, `setRoute`, `testInference` already there.)
+- [x] Multipart upload lives in `useRegisterModel` (XHR with `upload.onprogress`) rather than on the typed client — keeps `api.ts` JSON-only per design Decision 6.
+- [x] Existing JSON methods unchanged: `removeModel`, `setRoute`, `testInference`.
 
 ## Mutation Hooks
 
@@ -26,10 +26,10 @@ Each block ships as one commit on `change/modelgate-web-actions-v1`.
 
 ## Models screen — Register action
 
-- [ ] Add `Register model` button to the screen header.
-- [ ] Open `<RegisterModelDialog>` (file picker + Upload). Progress bar fed by `XMLHttpRequest` or `fetch` upload events.
-- [ ] On submit, run `useRegisterModel`. Dialog stays open while uploading; closes on success.
-- [ ] Toast on success / failure. List refetches.
+- [x] Add `Register model` button to the screen header.
+- [x] Open `<RegisterModelDialog>` (file picker + Upload). Progress bar fed by XHR `upload.onprogress`.
+- [x] On submit, run `useRegisterModel`. Dialog stays open while uploading; closes on success; stays open on error so the operator can pick a different file.
+- [x] Toast on success / failure. List refetches.
 
 ## Routes screen
 
