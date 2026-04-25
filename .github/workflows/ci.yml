@@ -40,6 +40,9 @@ jobs:
       - name: Typecheck
         working-directory: ui/modelgate-web
         run: npm run typecheck
+      - name: Test
+        working-directory: ui/modelgate-web
+        run: npm test
       - name: Build
         working-directory: ui/modelgate-web
         run: npm run build

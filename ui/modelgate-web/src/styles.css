@@ -242,3 +242,210 @@
   text-rendering: optimizeLegibility;
   font-variant-numeric: tabular-nums;
 }
+
+/* === Dashboard chrome additions (modelgate-web-actions-v1) === */
+
+/* Toaster — bottom-right anchored region announced via aria-live */
+.toaster {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 360px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-1);
+  border: 1px solid var(--fg-3);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast--success { border-color: var(--ok-1); }
+.toast--error   { border-color: var(--alert-1); }
+.toast__message { font-weight: 600; }
+.toast__detail  { color: var(--fg-2); font-size: var(--fs-xs); }
+
+/* Confirm dialog */
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.dialog {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-4);
+  width: min(480px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+}
+.dialog__title { margin: 0; font-size: var(--fs-lg); }
+.dialog__body { color: var(--fg-1); font-size: var(--fs-sm); }
+.dialog__cli {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow-x: auto;
+}
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 12px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary {
+  background: var(--accent-1, var(--fg-0));
+  color: var(--bg-0);
+  border-color: var(--accent-1, var(--fg-0));
+}
+.btn--destructive {
+  background: var(--alert-1);
+  color: var(--bg-0);
+  border-color: var(--alert-1);
+}
+
+/* Panel header — used for screens that need a heading + action button row */
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.panel__header h2 { margin: 0; }
+
+/* Progress bar — used by the upload dialog */
+.progress {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  background: var(--accent-1, var(--fg-0));
+  transition: width 80ms linear;
+}
+
+/* Forms — used by RoutesScreen Set route + InferenceScreen */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-1);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+}
+.form__row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.form__row > span { color: var(--fg-1); }
+.form__row input,
+.form__row select {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: 6px 8px;
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+.form__row input:disabled,
+.form__row select:disabled { opacity: 0.6; }
+.form__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* Inference screen — two-column input/result layout */
+.inference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.inference__input,
+.inference__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.inference__output {
+  background: var(--bg-0);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+  overflow: auto;
+}
+
+/* JSON editor */
+.json-editor { display: flex; flex-direction: column; gap: 4px; }
+.json-editor__textarea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: var(--space-2);
+  border: 1px solid var(--fg-3);
+  border-radius: var(--radius-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  resize: vertical;
+}
+.json-editor__textarea--invalid { border-color: var(--alert-1); }
+.json-editor__error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--alert-1);
+  font-family: var(--font-mono);
+}
