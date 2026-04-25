@@ -50,6 +50,13 @@ jobs:
           flags: frontend
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+      - name: Stash frontend coverage for Sonar
+        uses: actions/upload-artifact@v5
+        with:
+          name: modelgate-web-coverage
+          path: ui/modelgate-web/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: error
       - name: Build
         working-directory: ui/modelgate-web
         run: npm run build
@@ -101,6 +108,13 @@ jobs:
           flags: rust
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+      - name: Stash Rust coverage for Sonar
+        uses: actions/upload-artifact@v5
+        with:
+          name: modelgate-rust-coverage
+          path: coverage-rust.info
+          retention-days: 1
+          if-no-files-found: error
 
   build:
     name: Build
@@ -116,10 +130,34 @@ jobs:
           path: ui/modelgate-web/dist
       - run: cargo build --workspace --release
 
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    needs: [frontend, test]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Sonar uses git blame for new-code detection; needs full
+          # history rather than the default shallow clone.
+          fetch-depth: 0
+      - name: Download Rust coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: modelgate-rust-coverage
+          path: .
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: modelgate-web-coverage
+          path: ui/modelgate-web/coverage
+      - uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   gate:
     name: CI Gate
     runs-on: ubuntu-latest
-    needs: [check-format, frontend, clippy, test, build]
+    needs: [check-format, frontend, clippy, test, build, sonar]
     if: github.event_name == 'pull_request'
     steps:
       - name: All checks passed

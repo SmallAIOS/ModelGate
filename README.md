@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/SmallAIOS/ModelGate/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/SmallAIOS/ModelGate/branch/develop/graph/badge.svg)](https://codecov.io/gh/SmallAIOS/ModelGate)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=SmallAIOS_ModelGate&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=SmallAIOS_ModelGate)
 
 **smctl** (SmallAIOS Control) is a unified CLI for managing multi-repo workspaces, git flow branching, spec-driven development, and dependency-ordered builds.
 
