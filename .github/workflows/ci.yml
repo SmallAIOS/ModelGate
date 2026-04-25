@@ -8,6 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Opt into Node 24 for JS-based actions (checkout, setup-node,
+  # upload-artifact, download-artifact). @v5 of upload/download-artifact
+  # still bundles Node 20 internally; this opts us onto the runner's
+  # Node 24 ahead of GitHub's June 2 2026 forced cutover, which
+  # silences the deprecation annotations.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   check-format:
