@@ -3,9 +3,7 @@
 ## Purpose
 
 `smctl-mcp` is the Model Context Protocol server that exposes `smctl` tools and resources to AI coding assistants. It runs in the same process as `smctl serve --mcp` and supports both the stdio and SSE transports.
-
 ## Requirements
-
 ### Requirement: Stdio transport for MCP
 
 `smctl-mcp` SHALL accept a stdio transport in which the MCP protocol owns stdout and the smctl-log subscriber routes every event to stderr.
@@ -28,13 +26,19 @@
 
 ### Requirement: Tool surface
 
-`smctl-mcp` SHALL expose every smctl-managed action as an MCP tool. The tool catalog MUST include workspace (init / add / remove / sync), worktree (add / list / remove), flow (init / feature / release / hotfix), spec (new / validate / archive / list), and build.
+`smctl-mcp` SHALL expose every smctl-managed action as an MCP tool. The tool catalog MUST include workspace (init / add / remove / sync), worktree (add / list / remove), flow (init / feature / release / hotfix), spec (new / validate / archive / list), build, and verify (policy / model / proof / protocol / discover).
 
 #### Scenario: Tool catalog enumeration
 
 - **WHEN** an MCP client requests the tool list
 - **THEN** the server MUST return at least the tools enumerated above
 - **AND** every tool's input schema MUST round-trip through `serde_json` without loss
+
+#### Scenario: Verify policy exposed as MCP tool
+
+- **WHEN** an MCP client invokes the `verify_policy` tool
+- **THEN** the server MUST run `smctl verify policy --json` against the active workspace
+- **AND** MUST return the JSON envelope verbatim as the tool result
 
 ### Requirement: Resource surface
 
