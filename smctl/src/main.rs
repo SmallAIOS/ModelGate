@@ -2294,7 +2294,39 @@ async fn run(cli: Cli) -> Result<i32> {
                         return Ok(exit_code::DRY_RUN);
                     }
 
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::VerifyStarted,
+                        verifier = subcommand_name,
+                        sources = ctx.manifest.sources.len() as u64,
+                        "verify started",
+                    );
                     let report = verifier.run(&ctx);
+                    match report.outcome {
+                        smctl_verify::Outcome::Passed | smctl_verify::Outcome::NoSources => {
+                            tracing::info!(
+                                msgid = %smctl_log::MsgId::VerifySucceeded,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                "verify succeeded",
+                            );
+                        }
+                        smctl_verify::Outcome::Failed => {
+                            tracing::error!(
+                                msgid = %smctl_log::MsgId::VerifyFailed,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                diagnostic_count = report.diagnostics.len() as u64,
+                                "verify failed",
+                            );
+                        }
+                        smctl_verify::Outcome::ToolMissing => {
+                            tracing::warn!(
+                                msgid = %smctl_log::MsgId::VerifierMissing,
+                                verifier = subcommand_name,
+                                "verifier tool missing on PATH",
+                            );
+                        }
+                    }
                     if want_json {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {

@@ -52,11 +52,11 @@ CLI dispatch in §5 now consults `manifest.verify.<verb>` to populate the per-ca
 
 ## 7. Logging MSGIDs
 
-- [ ] 7.1 Reserve range `SMCTL-0500..0599` in `smctl-log` MsgId enum + range docstring
-- [ ] 7.2 Allocate `VerifyStarted (501)`, `VerifySucceeded (502)`, `VerifyFailed (503)`, `VerifierMissing (504)`
-- [ ] 7.3 Default severities: Info / Info / Error / Warning
-- [ ] 7.4 Tests: codes_match_spec_catalog, codes_sit_in_reserved_range, default_severity_matches_spec
-- [ ] 7.5 Emit `VerifyStarted` at the start of each verifier run, `VerifySucceeded` / `VerifyFailed` at the end, `VerifierMissing` on discovery failure
+- [x] 7.1 Range `SMCTL-0500..0599` documented in the smctl-log MsgId range table
+- [x] 7.2 `VerifyStarted (501)`, `VerifySucceeded (502)`, `VerifyFailed (503)`, `VerifierMissing (504)` allocated
+- [x] 7.3 Default severities: Informational / Informational / Error / Warning
+- [x] 7.4 Three new smctl-log tests: `verify_codes_and_display_match_spec_catalog`, `verify_default_severity_matches_spec`, `verify_codes_sit_in_reserved_range`
+- [x] 7.5 CLI dispatch emits `VerifyStarted` before each run; `VerifySucceeded` on `Passed`/`NoSources`, `VerifyFailed` on `Failed`, `VerifierMissing` on `ToolMissing`
 
 ## 8. MCP tools
 
