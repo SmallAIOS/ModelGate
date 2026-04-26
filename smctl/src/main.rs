@@ -2150,55 +2150,18 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
                 };
 
-            // Per-verb [verify.<X>] subsection -> VerifyManifest. Each
-            // subverb pulls only its own slice; if the manifest is
-            // absent the verifier reports "no sources configured".
-            let manifest_for = |verb: &str| -> smctl_verify::VerifyManifest {
-                let Some(verify) = workspace_manifest.as_ref().and_then(|m| m.verify.as_ref())
-                else {
-                    return smctl_verify::VerifyManifest::default();
-                };
-                match verb {
-                    "policy" => verify
-                        .policy
-                        .as_ref()
-                        .map(|p| smctl_verify::VerifyManifest {
-                            sources: p.sources.clone(),
-                            fail_on: p.fail_on.clone(),
-                        })
-                        .unwrap_or_default(),
-                    "model" => verify
-                        .model
-                        .as_ref()
-                        .map(|m| smctl_verify::VerifyManifest {
-                            sources: m.specs.clone(),
-                            fail_on: m.fail_on.clone(),
-                        })
-                        .unwrap_or_default(),
-                    "proof" => verify
-                        .proof
-                        .as_ref()
-                        .map(|p| smctl_verify::VerifyManifest {
-                            sources: p.roots.clone(),
-                            fail_on: p.fail_on.clone(),
-                        })
-                        .unwrap_or_default(),
-                    "protocol" => verify
-                        .protocol
-                        .as_ref()
-                        .map(|p| smctl_verify::VerifyManifest {
-                            sources: p.specs.clone(),
-                            fail_on: p.fail_on.clone(),
-                        })
-                        .unwrap_or_default(),
-                    _ => smctl_verify::VerifyManifest::default(),
-                }
-            };
-
+            // Per-verb [verify.<X>] subsection -> VerifyManifest. The
+            // mapping (policy.sources / model.specs / proof.roots /
+            // protocol.specs) lives in smctl_verify::manifest_from_workspace
+            // so the smctl-mcp side stays in sync without copy-pasting
+            // the same match arms.
             let make_ctx = |verb: &str| smctl_verify::VerifyContext {
                 workspace_root: workspace_root.clone(),
                 repos: repos.clone(),
-                manifest: manifest_for(verb),
+                manifest: smctl_verify::manifest_from_workspace(
+                    workspace_manifest.as_ref().and_then(|m| m.verify.as_ref()),
+                    verb,
+                ),
                 strict,
                 verifier_filter: verifier_filter.clone(),
             };

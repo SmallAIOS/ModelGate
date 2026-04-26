@@ -97,6 +97,61 @@ fn default_fail_on() -> String {
     "any".to_string()
 }
 
+/// Project a `[verify]` subsection from `workspace.toml` onto the
+/// internal [`VerifyManifest`] shape for one verifier verb.
+///
+/// Each verb's natural field name differs (`sources` for Cedar
+/// policies, `specs` for TLA+ and SPIN, `roots` for Lean 4); this
+/// helper keeps the per-verb switch in one place so the CLI dispatch
+/// and the smctl-mcp run-verifier handler don't carry parallel copies
+/// of the same match arms.
+///
+/// Returns the default manifest (empty sources, `"any"` fail-on) when
+/// the section is absent or the verb is unknown.
+pub fn manifest_from_workspace(
+    section: Option<&smctl_workspace::VerifyManifestSection>,
+    verb: &str,
+) -> VerifyManifest {
+    let Some(s) = section else {
+        return VerifyManifest::default();
+    };
+    match verb {
+        "policy" => s
+            .policy
+            .as_ref()
+            .map(|p| VerifyManifest {
+                sources: p.sources.clone(),
+                fail_on: p.fail_on.clone(),
+            })
+            .unwrap_or_default(),
+        "model" => s
+            .model
+            .as_ref()
+            .map(|m| VerifyManifest {
+                sources: m.specs.clone(),
+                fail_on: m.fail_on.clone(),
+            })
+            .unwrap_or_default(),
+        "proof" => s
+            .proof
+            .as_ref()
+            .map(|p| VerifyManifest {
+                sources: p.roots.clone(),
+                fail_on: p.fail_on.clone(),
+            })
+            .unwrap_or_default(),
+        "protocol" => s
+            .protocol
+            .as_ref()
+            .map(|p| VerifyManifest {
+                sources: p.specs.clone(),
+                fail_on: p.fail_on.clone(),
+            })
+            .unwrap_or_default(),
+        _ => VerifyManifest::default(),
+    }
+}
+
 // --- Outputs ---
 
 /// Result of a [`Verifier::discover`] probe.

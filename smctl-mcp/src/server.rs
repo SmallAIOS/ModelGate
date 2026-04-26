@@ -1551,43 +1551,13 @@ impl SmctlServer {
             }
         };
 
-        let verify_manifest = manifest.as_ref().and_then(|m| m.verify.as_ref());
-        let per_verb = match verb {
-            "policy" => verify_manifest
-                .and_then(|v| v.policy.as_ref())
-                .map(|p| smctl_verify::VerifyManifest {
-                    sources: p.sources.clone(),
-                    fail_on: p.fail_on.clone(),
-                })
-                .unwrap_or_default(),
-            "model" => verify_manifest
-                .and_then(|v| v.model.as_ref())
-                .map(|m| smctl_verify::VerifyManifest {
-                    sources: m.specs.clone(),
-                    fail_on: m.fail_on.clone(),
-                })
-                .unwrap_or_default(),
-            "proof" => verify_manifest
-                .and_then(|v| v.proof.as_ref())
-                .map(|p| smctl_verify::VerifyManifest {
-                    sources: p.roots.clone(),
-                    fail_on: p.fail_on.clone(),
-                })
-                .unwrap_or_default(),
-            "protocol" => verify_manifest
-                .and_then(|v| v.protocol.as_ref())
-                .map(|p| smctl_verify::VerifyManifest {
-                    sources: p.specs.clone(),
-                    fail_on: p.fail_on.clone(),
-                })
-                .unwrap_or_default(),
-            _ => smctl_verify::VerifyManifest::default(),
-        };
-
         let ctx = smctl_verify::VerifyContext {
             workspace_root,
             repos,
-            manifest: per_verb,
+            manifest: smctl_verify::manifest_from_workspace(
+                manifest.as_ref().and_then(|m| m.verify.as_ref()),
+                verb,
+            ),
             strict,
             verifier_filter: None,
         };
