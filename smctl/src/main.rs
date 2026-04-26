@@ -119,6 +119,20 @@ enum Commands {
         command: QualityCommands,
     },
 
+    /// Run formal-verification suites (Cedar policy / TLA+ model / Lean 4 proof / SPIN protocol)
+    Verify {
+        /// Filter to one verifier by name (`policy`, `model`, `proof`, `protocol`)
+        #[arg(long, global = true)]
+        verifier: Option<String>,
+
+        /// Treat warnings as errors when computing the gate exit code
+        #[arg(long, global = true)]
+        strict: bool,
+
+        #[command(subcommand)]
+        command: VerifyCommands,
+    },
+
     /// Talk to a running ModelGate instance (status, models, routes, test, logs)
     Gate {
         /// ModelGate endpoint URL (overrides MODELGATE_URL env and workspace.toml)
@@ -434,6 +448,40 @@ enum QualityCommands {
 }
 
 #[derive(Subcommand, Debug)]
+enum VerifyCommands {
+    /// Verify Cedar authorization policies (`[verify.policy].sources`)
+    Policy {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run TLA+ model checking (`[verify.model].specs`)
+    Model {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run Lean 4 proofs (`[verify.proof].roots`)
+    Proof {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run SPIN/Promela protocol verification (`[verify.protocol].specs`)
+    Protocol {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enumerate which verifiers are reachable on PATH
+    Discover {
+        /// Emit the discovery list as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum GateCommands {
     /// Show the health and summary metadata of the ModelGate instance
     Status {
@@ -621,6 +669,50 @@ fn open_in_browser(url: &str) -> std::io::Result<()> {
         Err(std::io::Error::other(format!(
             "browser opener exited with status {status}"
         )))
+    }
+}
+
+/// Render a [`smctl_verify::VerifyReport`] in human-readable form.
+/// Mirrors the table-and-detail layout used by `smctl quality`.
+fn render_verify_report_human(report: &smctl_verify::VerifyReport) {
+    use smctl_verify::Outcome;
+
+    println!("verifier: {}", report.verifier);
+    println!(
+        "outcome:  {}",
+        match report.outcome {
+            Outcome::Passed => "passed",
+            Outcome::Failed => "failed",
+            Outcome::NoSources => "no sources configured",
+            Outcome::ToolMissing => "tool missing",
+        }
+    );
+    if !report.sources.is_empty() {
+        println!();
+        println!("{:<8} SOURCE", "STATUS");
+        for row in &report.sources {
+            let status = match row.outcome {
+                Outcome::Passed => "passed",
+                Outcome::Failed => "failed",
+                _ => "—",
+            };
+            println!(
+                "{status:<8} {} {}",
+                row.source,
+                if row.note.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", row.note)
+                }
+            );
+        }
+    }
+    if !report.diagnostics.is_empty() {
+        println!();
+        println!("diagnostics:");
+        for d in &report.diagnostics {
+            println!("  - {d}");
+        }
     }
 }
 
@@ -2022,6 +2114,209 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
             }
         },
+
+        Commands::Verify {
+            verifier: verifier_filter,
+            strict,
+            command,
+        } => {
+            let workspace_root =
+                resolve_root().unwrap_or_else(|_| std::env::current_dir().unwrap());
+            let workspace_manifest =
+                smctl_workspace::WorkspaceManifest::load_from_root(&workspace_root).ok();
+
+            // Build the per-repo path map. With a workspace.toml, walk
+            // [[repos]]; without, fall back to a single anonymous "."
+            // entry rooted at the cwd so `smctl verify` is at least
+            // useful in repo-local invocations.
+            let repos: std::collections::BTreeMap<String, std::path::PathBuf> =
+                match workspace_manifest.as_ref() {
+                    Some(m) => m
+                        .repos
+                        .iter()
+                        .map(|r| {
+                            let path = r
+                                .path
+                                .clone()
+                                .map(std::path::PathBuf::from)
+                                .unwrap_or_else(|| workspace_root.join(&r.name));
+                            (r.name.clone(), path)
+                        })
+                        .collect(),
+                    None => {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert(".".into(), workspace_root.clone());
+                        m
+                    }
+                };
+
+            // Per-verb [verify.<X>] subsection -> VerifyManifest. The
+            // mapping (policy.sources / model.specs / proof.roots /
+            // protocol.specs) lives in smctl_verify::manifest_from_workspace
+            // so the smctl-mcp side stays in sync without copy-pasting
+            // the same match arms.
+            let make_ctx = |verb: &str| smctl_verify::VerifyContext {
+                workspace_root: workspace_root.clone(),
+                repos: repos.clone(),
+                manifest: smctl_verify::manifest_from_workspace(
+                    workspace_manifest.as_ref().and_then(|m| m.verify.as_ref()),
+                    verb,
+                ),
+                strict,
+                verifier_filter: verifier_filter.clone(),
+            };
+
+            let registry = smctl_verify::Registry::with_default_verifiers();
+
+            match command {
+                VerifyCommands::Discover { json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+                    let entries: Vec<_> = registry
+                        .iter()
+                        .map(|v| {
+                            let d = v.discover();
+                            serde_json::json!({
+                                "verifier": v.name(),
+                                "discovery": d,
+                            })
+                        })
+                        .collect();
+                    if want_json {
+                        println!("{}", serde_json::to_string_pretty(&entries)?);
+                    } else {
+                        println!("{:<10} {:<10} DETAIL", "VERIFIER", "STATUS");
+                        for v in registry.iter() {
+                            match v.discover() {
+                                smctl_verify::DiscoveryResult::Found { path, version } => {
+                                    println!(
+                                        "{:<10} {:<10} {} ({})",
+                                        v.name(),
+                                        "found",
+                                        path,
+                                        if version.is_empty() {
+                                            "no version"
+                                        } else {
+                                            &version
+                                        }
+                                    );
+                                }
+                                smctl_verify::DiscoveryResult::NotInstalled {
+                                    tool,
+                                    install_hint,
+                                } => {
+                                    println!(
+                                        "{:<10} {:<10} not installed — {tool}: {install_hint}",
+                                        v.name(),
+                                        "missing"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(exit_code::SUCCESS)
+                }
+                other => {
+                    let (subcommand_name, want_json) = match other {
+                        VerifyCommands::Policy { json } => ("policy", json),
+                        VerifyCommands::Model { json } => ("model", json),
+                        VerifyCommands::Proof { json } => ("proof", json),
+                        VerifyCommands::Protocol { json } => ("protocol", json),
+                        VerifyCommands::Discover { .. } => unreachable!(),
+                    };
+                    let want_json = want_json || cli.json || !is_stdout_tty();
+                    let verifier = match registry.find(subcommand_name) {
+                        Some(v) => v,
+                        None => {
+                            let msg = format!("verifier '{subcommand_name}' is not registered");
+                            if want_json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "error": "verifier_not_registered",
+                                        "message": msg,
+                                    }))?
+                                );
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: this is an internal smctl bug — please file an issue against ModelGate"
+                                );
+                            }
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+                    };
+
+                    let ctx = make_ctx(subcommand_name);
+
+                    if dry_run {
+                        println!(
+                            "would run verifier '{}' against {} configured source pattern(s)",
+                            subcommand_name,
+                            ctx.manifest.sources.len()
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::VerifyStarted,
+                        verifier = subcommand_name,
+                        sources = ctx.manifest.sources.len() as u64,
+                        "verify started",
+                    );
+                    let report = verifier.run(&ctx);
+                    match report.outcome {
+                        smctl_verify::Outcome::Passed | smctl_verify::Outcome::NoSources => {
+                            tracing::info!(
+                                msgid = %smctl_log::MsgId::VerifySucceeded,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                "verify succeeded",
+                            );
+                        }
+                        smctl_verify::Outcome::Failed => {
+                            tracing::error!(
+                                msgid = %smctl_log::MsgId::VerifyFailed,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                diagnostic_count = report.diagnostics.len() as u64,
+                                "verify failed",
+                            );
+                        }
+                        smctl_verify::Outcome::ToolMissing => {
+                            tracing::warn!(
+                                msgid = %smctl_log::MsgId::VerifierMissing,
+                                verifier = subcommand_name,
+                                "verifier tool missing on PATH",
+                            );
+                        }
+                    }
+                    if want_json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        render_verify_report_human(&report);
+                    }
+
+                    let exit = match report.outcome {
+                        smctl_verify::Outcome::Passed | smctl_verify::Outcome::NoSources => {
+                            exit_code::SUCCESS
+                        }
+                        smctl_verify::Outcome::Failed => exit_code::GENERAL_ERROR,
+                        smctl_verify::Outcome::ToolMissing => {
+                            // ToolMissing is gated by --strict: when set
+                            // we treat it as a failure; otherwise it's
+                            // an informational success exit so a developer
+                            // without TLC installed isn't blocked.
+                            if ctx.strict {
+                                exit_code::GENERAL_ERROR
+                            } else {
+                                exit_code::SUCCESS
+                            }
+                        }
+                    };
+                    Ok(exit)
+                }
+            }
+        }
 
         Commands::Config { command } => {
             let mut config = smctl::SmctlConfig::load_user_config()?;

@@ -72,3 +72,7 @@ The production web dashboard lives in two places: the Rust server at [`modelgate
 ## Logging
 
 All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The canonical MSGID catalog and severity-mapping table live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that document is authoritative for any new MSGID allocation, facility choice, or transport change.
+
+## Formal verification
+
+`smctl verify` exposes Cedar (policy), TLA+ (model), Lean 4 (proof), and SPIN/Promela (protocol). Cedar runs end-to-end inside `smctl`; the other three are exit-code shell-out wrappers in v1, with deep parsing deferred to per-tool follow-up changes. Source roots are declared in `[verify.<domain>]` blocks in `workspace.toml`. Capability spec lives at `openspec/specs/smctl-verify/spec.md`; the design rationale (Cedar vs Alloy vs Rego analysis) is preserved in the archived `formal-methods-v1` change. MSGID range `SMCTL-0500..0599`.

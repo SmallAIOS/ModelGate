@@ -29,6 +29,7 @@ smctl-workspace = { path = "../smctl-workspace" }
 smctl-flow = { path = "../smctl-flow" }
 smctl-spec = { path = "../smctl-spec" }
 smctl-build = { path = "../smctl-build" }
+smctl-verify = { path = "../smctl-verify" }
 
 [dev-dependencies]
 tempfile.workspace = true

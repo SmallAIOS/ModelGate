@@ -89,6 +89,8 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `gate test <model> --input <file>` | Run a test inference against a model |
 | `gate logs [--follow]` | Stream ModelGate logs (Ctrl+C to exit) |
 | `gate web [--host] [--port] [--open]` | Start the ModelGate dashboard in a browser |
+| `verify policy/model/proof/protocol` | Run formal-verification suites (Cedar / TLA+ / Lean 4 / SPIN/Promela) |
+| `verify discover` | Enumerate which formal-verification tools are reachable on PATH |
 | `config show/set/get` | Configuration management |
 | `completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
@@ -160,6 +162,22 @@ transports = ["stderr"]       # any of "stderr", "file", "syslog"
 file = "/var/log/smctl.log"   # only used when "file" is in transports
 facility = "local0"           # local0..local7 or daemon
 level = "info"                # error / warn / info / debug / trace
+
+[verify.policy]
+sources = ["security/policies/*.cedar"]   # globs relative to each repo
+fail_on = "any"                            # "any" or "error"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]               # TLA+ specs (`tlc` runner)
+fail_on = "any"
+
+[verify.proof]
+roots = ["formal/lean"]                    # Lean 4 project roots (`lake build`)
+fail_on = "any"
+
+[verify.protocol]
+specs = ["formal/spin/*.pml"]              # SPIN/Promela specs (`spin -a`)
+fail_on = "any"
 ```
 
 ## Architecture
@@ -176,6 +194,7 @@ level = "info"                # error / warn / info / debug / trace
 - **smctl-quality** — engineering-quality checks (audit, deps, unsafe, dsm, complexity)
 - **smctl-gate** — ModelGate control-plane client (status, models, routes, inference, logs)
 - **modelgate-web** — Axum server serving the React dashboard SPA plus a JSON/SSE proxy to ModelGate
+- **smctl-verify** — formal-verification surface (Cedar policy, TLA+ model, Lean 4 proof, SPIN/Promela protocol)
 
 ## Logging
 
@@ -203,6 +222,29 @@ smctl gate web --port 9400   # use a different port
 The dashboard mirrors the CLI surface: Overview reads `/api/health`, Models reads `/api/models`, Policy and Terminal render placeholder states until the upstream endpoints ship. For frontend development run `npm run dev` in `ui/modelgate-web/` side-by-side with `smctl gate web` — Vite proxies `/api/*` to `127.0.0.1:9378` on port `5173`.
 
 The default bind is `127.0.0.1`. Non-loopback binds emit a warning because there is no authentication layer yet.
+
+## Verification
+
+`smctl verify` exposes four formal-verification domains plus a discovery sweep, backed by the [`smctl-verify`](smctl-verify/) crate:
+
+| Subcommand | Tool | Domain |
+|---|---|---|
+| `verify policy` | [Cedar](https://www.cedarpolicy.com) (Rust SDK, end-to-end) | Authorization policies (RBAC / ABAC / MAC) |
+| `verify model` | TLA+ (`tlc`, shell-out) | Behavioural / temporal properties |
+| `verify proof` | Lean 4 (`lake build`, shell-out) | Theorem proving |
+| `verify protocol` | SPIN/Promela (`spin -a`, shell-out) | Concurrent protocol verification |
+| `verify discover` | — | Lists which of the above are reachable on PATH |
+
+Each verifier reads its source roots from the matching `[verify.<domain>]` section in `workspace.toml` (see the reference above). With no section, the verifier exits 0 with `no sources configured`. Cedar runs end-to-end inside the `smctl` process; the other three are exit-code level shell-out wrappers in v1 — deep output parsing is queued for follow-up changes (`tla-plus-runner-v1`, `lean-proof-runner-v1`, `spin-protocol-runner-v1`).
+
+```bash
+smctl verify discover                 # which verifiers are installed?
+smctl verify policy --json            # Cedar policy verification with JSON output
+smctl verify model --strict           # treat warnings as errors when computing the gate
+smctl --dry-run verify proof          # preview which Lean roots would run
+```
+
+Lifecycle events emit on `SMCTL-0501` (`VerifyStarted`), `SMCTL-0502` (`VerifySucceeded`), `SMCTL-0503` (`VerifyFailed`), `SMCTL-0504` (`VerifierMissing`).
 
 ## Design system
 
