@@ -475,6 +475,145 @@ fail_on = "any"
         .stdout(predicate::str::contains("\"1 policy"));
 }
 
+#[test]
+fn test_verify_policy_with_malformed_cedar_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("policies")).unwrap();
+    // Missing closing paren — Cedar parser should reject this.
+    std::fs::write(
+        repo_dir.join("policies").join("broken.cedar"),
+        "permit(principal, action, resource;",
+    )
+    .unwrap();
+
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        format!(
+            r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.policy]
+sources = ["policies/*.cedar"]
+fail_on = "any"
+"#,
+            repo = repo_dir.display()
+        ),
+    )
+    .unwrap();
+
+    // Outcome::Failed -> exit_code::GENERAL_ERROR (2). The note
+    // carries the three-part remediation pointing back at
+    // `smctl verify policy`.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("broken.cedar"))
+        .stdout(predicate::str::contains("smctl verify policy"));
+}
+
+#[test]
+fn test_verify_model_no_sources_emits_no_sources() {
+    // `tlc` is unlikely to be on the runner's PATH; the
+    // discover-fail short-circuit produces ToolMissing. But when
+    // there's also no [verify.model] config, we want to exercise
+    // the model dispatch arm regardless. Use --dry-run to avoid
+    // depending on whether `tlc` is reachable.
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    smctl()
+        .args(["--dry-run", "verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'model'"));
+}
+
+#[test]
+fn test_verify_proof_dry_run_uses_proof_subsection() {
+    let dir = tempfile::tempdir().unwrap();
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[verify.proof]
+roots = ["formal/lean", "kernel/proofs"]
+fail_on = "any"
+"#,
+    )
+    .unwrap();
+
+    // dry-run prints "N configured source pattern(s)" — assert that
+    // the proof verb's dispatch picks up the .roots field (length 2)
+    // rather than .sources or .specs from another subsection.
+    smctl()
+        .args(["--dry-run", "verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'proof'"))
+        .stdout(predicate::str::contains("2 configured source pattern"));
+}
+
+#[test]
+fn test_verify_protocol_dry_run_uses_protocol_subsection() {
+    let dir = tempfile::tempdir().unwrap();
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[verify.protocol]
+specs = ["formal/spin/a.pml", "formal/spin/b.pml", "formal/spin/c.pml"]
+fail_on = "any"
+"#,
+    )
+    .unwrap();
+
+    smctl()
+        .args(["--dry-run", "verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("3 configured source pattern"));
+}
+
+#[test]
+fn test_verify_strict_flag_propagates() {
+    // --strict is a verify-level global flag; help should expose it
+    // both at `smctl verify --help` and at each subverb's help.
+    smctl()
+        .args(["verify", "policy", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--strict"))
+        .stdout(predicate::str::contains("--verifier"));
+}
+
 // ── Spec duplicate error ─────────────────────────────────────────────
 
 #[test]

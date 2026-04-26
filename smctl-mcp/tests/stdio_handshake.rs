@@ -234,6 +234,40 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
         "no [verify.policy] in fixture manifest -> outcome=no_sources, got {policy_text}"
     );
 
+    // Each remaining verb runs through its own #[tool] handler and
+    // through SmctlServer::run_verifier with a different verb name —
+    // exercise all three even though they short-circuit identically
+    // (no [verify.<verb>] section -> no_sources, OR tool_missing if
+    // the runner happens to have tlc/lake/spin installed).
+    for verb_tool in [
+        "smctl_verify_model",
+        "smctl_verify_proof",
+        "smctl_verify_protocol",
+    ] {
+        let resp = client
+            .call_tool(CallToolRequestParams::new(verb_tool))
+            .await?;
+        assert!(
+            !resp.is_error.unwrap_or(false),
+            "{verb_tool} reported an error payload: {resp:?}"
+        );
+        let body_text = resp
+            .content
+            .first()
+            .and_then(|c| c.raw.as_text())
+            .map(|t| t.text.as_str())
+            .unwrap_or_else(|| panic!("{verb_tool} should carry text content"));
+        let body: serde_json::Value = serde_json::from_str(body_text)?;
+        let outcome = body
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            ["no_sources", "tool_missing"].contains(&outcome),
+            "{verb_tool} outcome should be no_sources or tool_missing on a fresh fixture; got '{outcome}' in {body_text}"
+        );
+    }
+
     // Flow family: init with no repos completes and returns a
     // FlowResult with an empty repos array.
     let flow = client
