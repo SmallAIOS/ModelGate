@@ -191,6 +191,20 @@ pub struct BuildParams {
     pub clean: Option<bool>,
 }
 
+/// Shared input shape for the four `smctl_verify_*` source-running
+/// tools. `verify_discover` takes no arguments and uses
+/// [`VerifyDiscoverParams`] instead.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyParams {
+    /// Treat warnings as errors when computing the gate outcome.
+    #[serde(default)]
+    pub strict: Option<bool>,
+}
+
+/// Input schema for the `smctl_verify_discover` tool.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct VerifyDiscoverParams {}
+
 /// MCP server for smctl. Owns the workspace root plus the
 /// auto-generated tool router.
 #[derive(Debug, Clone)]
@@ -1431,6 +1445,167 @@ impl SmctlServer {
 
         Ok(CallToolResult::success(vec![Content::text(
             Self::to_json_text(&serde_json::to_value(&report).unwrap_or_default())?,
+        )]))
+    }
+
+    /// Run the Cedar policy verifier and return the report as JSON.
+    #[tool(
+        name = "smctl_verify_policy",
+        description = "Run Cedar policy verification against [verify.policy].sources from workspace.toml. Returns a VerifyReport JSON with per-source pass/fail rows."
+    )]
+    async fn verify_policy(
+        &self,
+        Parameters(params): Parameters<VerifyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.run_verifier("policy", params.strict.unwrap_or(false))
+    }
+
+    /// Run the TLA+ model checker against `[verify.model].specs`.
+    #[tool(
+        name = "smctl_verify_model",
+        description = "Run TLA+ model checking against [verify.model].specs from workspace.toml. Returns a VerifyReport JSON; surfaces tool_missing when tlc isn't on PATH."
+    )]
+    async fn verify_model(
+        &self,
+        Parameters(params): Parameters<VerifyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.run_verifier("model", params.strict.unwrap_or(false))
+    }
+
+    /// Run Lean 4 proofs against `[verify.proof].roots`.
+    #[tool(
+        name = "smctl_verify_proof",
+        description = "Run Lean 4 proofs against [verify.proof].roots from workspace.toml. Returns a VerifyReport JSON; surfaces tool_missing when lake isn't on PATH."
+    )]
+    async fn verify_proof(
+        &self,
+        Parameters(params): Parameters<VerifyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.run_verifier("proof", params.strict.unwrap_or(false))
+    }
+
+    /// Run SPIN/Promela protocol verification against
+    /// `[verify.protocol].specs`.
+    #[tool(
+        name = "smctl_verify_protocol",
+        description = "Run SPIN/Promela protocol verification against [verify.protocol].specs from workspace.toml. Returns a VerifyReport JSON; surfaces tool_missing when spin isn't on PATH."
+    )]
+    async fn verify_protocol(
+        &self,
+        Parameters(params): Parameters<VerifyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.run_verifier("protocol", params.strict.unwrap_or(false))
+    }
+
+    /// Enumerate which verifiers are reachable on PATH.
+    #[tool(
+        name = "smctl_verify_discover",
+        description = "Enumerate every smctl-verify verifier and report whether its underlying tool is reachable on PATH (Cedar, TLA+, Lean 4, SPIN)."
+    )]
+    async fn verify_discover(
+        &self,
+        Parameters(_params): Parameters<VerifyDiscoverParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let registry = smctl_verify::Registry::with_default_verifiers();
+        let entries: Vec<_> = registry
+            .iter()
+            .map(|v| {
+                serde_json::json!({
+                    "verifier": v.name(),
+                    "discovery": v.discover(),
+                })
+            })
+            .collect();
+        let payload = serde_json::Value::Array(entries);
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
+        )]))
+    }
+}
+
+impl SmctlServer {
+    /// Shared body for `verify_policy` / `model` / `proof` /
+    /// `protocol` — load the manifest, build the per-verb context,
+    /// dispatch to the registry, return the report as JSON.
+    fn run_verifier(&self, verb: &str, strict: bool) -> Result<CallToolResult, ErrorData> {
+        let workspace_root = (*self.workspace_root).clone();
+        let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&workspace_root).ok();
+
+        let repos: std::collections::BTreeMap<String, PathBuf> = match manifest.as_ref() {
+            Some(m) => m
+                .repos
+                .iter()
+                .map(|r| {
+                    let path = r
+                        .path
+                        .clone()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| workspace_root.join(&r.name));
+                    (r.name.clone(), path)
+                })
+                .collect(),
+            None => {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(".".into(), workspace_root.clone());
+                m
+            }
+        };
+
+        let verify_manifest = manifest.as_ref().and_then(|m| m.verify.as_ref());
+        let per_verb = match verb {
+            "policy" => verify_manifest
+                .and_then(|v| v.policy.as_ref())
+                .map(|p| smctl_verify::VerifyManifest {
+                    sources: p.sources.clone(),
+                    fail_on: p.fail_on.clone(),
+                })
+                .unwrap_or_default(),
+            "model" => verify_manifest
+                .and_then(|v| v.model.as_ref())
+                .map(|m| smctl_verify::VerifyManifest {
+                    sources: m.specs.clone(),
+                    fail_on: m.fail_on.clone(),
+                })
+                .unwrap_or_default(),
+            "proof" => verify_manifest
+                .and_then(|v| v.proof.as_ref())
+                .map(|p| smctl_verify::VerifyManifest {
+                    sources: p.roots.clone(),
+                    fail_on: p.fail_on.clone(),
+                })
+                .unwrap_or_default(),
+            "protocol" => verify_manifest
+                .and_then(|v| v.protocol.as_ref())
+                .map(|p| smctl_verify::VerifyManifest {
+                    sources: p.specs.clone(),
+                    fail_on: p.fail_on.clone(),
+                })
+                .unwrap_or_default(),
+            _ => smctl_verify::VerifyManifest::default(),
+        };
+
+        let ctx = smctl_verify::VerifyContext {
+            workspace_root,
+            repos,
+            manifest: per_verb,
+            strict,
+            verifier_filter: None,
+        };
+
+        let registry = smctl_verify::Registry::with_default_verifiers();
+        let verifier = registry.find(verb).ok_or_else(|| {
+            ErrorData::internal_error(
+                format!(
+                    "Verifier '{verb}' is not registered. \
+                     This is a smctl-mcp bug — please file an issue against ModelGate."
+                ),
+                None,
+            )
+        })?;
+        let report = verifier.run(&ctx);
+        let payload = serde_json::to_value(&report).unwrap_or_default();
+        Ok(CallToolResult::success(vec![Content::text(
+            Self::to_json_text(&payload)?,
         )]))
     }
 }

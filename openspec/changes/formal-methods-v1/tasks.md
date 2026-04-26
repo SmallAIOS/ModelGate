@@ -60,9 +60,9 @@ CLI dispatch in §5 now consults `manifest.verify.<verb>` to populate the per-ca
 
 ## 8. MCP tools
 
-- [ ] 8.1 Add `verify_policy` MCP tool wrapping `smctl verify policy --json`
-- [ ] 8.2 Add `verify_model`, `verify_proof`, `verify_protocol`, `verify_discover`
-- [ ] 8.3 Update `smctl-mcp` integration test to assert each new tool round-trips
+- [x] 8.1 `smctl_verify_policy` MCP tool returns the Cedar VerifyReport JSON
+- [x] 8.2 `smctl_verify_model`, `smctl_verify_proof`, `smctl_verify_protocol`, `smctl_verify_discover` mirror the CLI surface
+- [ ] 8.3 Integration test assertions for the new tools — deferred. The existing smctl-mcp integration tests still pass; per-tool MCP roundtrip assertions land in a follow-up commit (the tools themselves compile and exercise the same `run_verifier` helper the CLI already test-covers via §3/§4).
 
 ## 9. Docs
 
