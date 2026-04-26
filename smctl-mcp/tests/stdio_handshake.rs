@@ -34,6 +34,11 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_spec_archive",
     "smctl_spec_list",
     "smctl_build",
+    "smctl_verify_policy",
+    "smctl_verify_model",
+    "smctl_verify_proof",
+    "smctl_verify_protocol",
+    "smctl_verify_discover",
 ];
 
 #[tokio::test]
@@ -165,6 +170,68 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     assert!(
         build_json.get("results").is_some(),
         "expected results field in {build_text}"
+    );
+
+    // Verify family: discover lists every shipped verifier and
+    // reports kind=found for Cedar (Rust dep) regardless of host
+    // tooling. policy with no [verify.policy] sources returns an
+    // empty source list with outcome=no_sources.
+    let verify_discover = client
+        .call_tool(CallToolRequestParams::new("smctl_verify_discover"))
+        .await?;
+    assert!(
+        !verify_discover.is_error.unwrap_or(false),
+        "smctl_verify_discover reported an error payload: {verify_discover:?}"
+    );
+    let discover_text = verify_discover
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_verify_discover should carry text content");
+    let discover_json: serde_json::Value = serde_json::from_str(discover_text)?;
+    let entries = discover_json
+        .as_array()
+        .expect("discover returns a JSON array");
+    assert_eq!(
+        entries.len(),
+        4,
+        "expected 4 verifier entries (policy/model/proof/protocol) in {discover_text}"
+    );
+    let policy_entry = entries
+        .iter()
+        .find(|e| e.get("verifier").and_then(|v| v.as_str()) == Some("policy"))
+        .expect("policy entry");
+    assert_eq!(
+        policy_entry
+            .pointer("/discovery/kind")
+            .and_then(|v| v.as_str()),
+        Some("found"),
+        "Cedar should always be Found (Rust dep): {policy_entry}"
+    );
+
+    let verify_policy = client
+        .call_tool(CallToolRequestParams::new("smctl_verify_policy"))
+        .await?;
+    assert!(
+        !verify_policy.is_error.unwrap_or(false),
+        "smctl_verify_policy reported an error payload: {verify_policy:?}"
+    );
+    let policy_text = verify_policy
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_verify_policy should carry text content");
+    let policy_json: serde_json::Value = serde_json::from_str(policy_text)?;
+    assert_eq!(
+        policy_json.get("verifier").and_then(|v| v.as_str()),
+        Some("policy")
+    );
+    assert_eq!(
+        policy_json.get("outcome").and_then(|v| v.as_str()),
+        Some("no_sources"),
+        "no [verify.policy] in fixture manifest -> outcome=no_sources, got {policy_text}"
     );
 
     // Flow family: init with no repos completes and returns a

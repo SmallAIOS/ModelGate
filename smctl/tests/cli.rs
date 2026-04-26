@@ -312,6 +312,169 @@ fn test_spec_list() {
         .stdout(predicate::str::contains("spec-b"));
 }
 
+// ── Verify commands ──────────────────────────────────────────────────
+
+#[test]
+fn test_verify_help_lists_all_subcommands() {
+    smctl()
+        .args(["verify", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("policy"))
+        .stdout(predicate::str::contains("model"))
+        .stdout(predicate::str::contains("proof"))
+        .stdout(predicate::str::contains("protocol"))
+        .stdout(predicate::str::contains("discover"));
+}
+
+#[test]
+fn test_verify_discover_lists_four_verifiers() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // Discover should list all four verifiers regardless of host
+    // toolchain. policy is always Found (Cedar is a Rust dep); the
+    // shell-out trio may be either Found or NotInstalled depending
+    // on the runner — assert each row appears, not the per-row
+    // status.
+    smctl()
+        .args(["verify", "discover", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("policy"))
+        .stdout(predicate::str::contains("model"))
+        .stdout(predicate::str::contains("proof"))
+        .stdout(predicate::str::contains("protocol"));
+}
+
+#[test]
+fn test_verify_discover_json_output() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let output = smctl()
+        .args(["verify", "discover", "--json", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let body = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|e| panic!("discover --json should produce valid JSON: {e}\n{body}"));
+    let arr = parsed.as_array().expect("array");
+    assert_eq!(arr.len(), 4, "expected 4 entries: {body}");
+    let names: Vec<&str> = arr
+        .iter()
+        .filter_map(|e| e.get("verifier").and_then(|v| v.as_str()))
+        .collect();
+    assert!(names.contains(&"policy"));
+    assert!(names.contains(&"model"));
+    assert!(names.contains(&"proof"));
+    assert!(names.contains(&"protocol"));
+}
+
+#[test]
+fn test_verify_policy_no_sources_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // No [verify.policy] section in the fresh manifest -> Cedar
+    // verifier reports outcome=no_sources and exits 0. assert_cmd
+    // gives the child a non-TTY stdout, so the dispatcher's
+    // safety-quality-v1 Decision 9 fallback emits JSON; we assert
+    // against the JSON envelope rather than the human table.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"verifier\": \"policy\""))
+        .stdout(predicate::str::contains("\"outcome\": \"no_sources\""));
+}
+
+#[test]
+fn test_verify_policy_dry_run() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // --dry-run should describe what would happen and exit with the
+    // DRY_RUN code (10), per safety-quality-v1's exit-code contract.
+    smctl()
+        .args(["--dry-run", "verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'policy'"));
+}
+
+#[test]
+fn test_verify_policy_with_well_formed_cedar_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("policies")).unwrap();
+    std::fs::write(
+        repo_dir.join("policies").join("allow.cedar"),
+        "permit(principal, action, resource);",
+    )
+    .unwrap();
+
+    // Hand-write the manifest so the TOML structure is unambiguous —
+    // [[repos]] entries and [verify.policy] both come from one
+    // serialise pass rather than init_workspace + an appended tail.
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.policy]
+sources = ["policies/*.cedar"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+
+    // Cedar runs against the policy file we wrote. Outcome=passed,
+    // 1 policy counted. assert_cmd captures stdout as non-TTY so
+    // dispatcher falls through to JSON output per safety-quality-v1
+    // Decision 9.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("allow.cedar"))
+        .stdout(predicate::str::contains("\"1 policy"));
+}
+
 // ── Spec duplicate error ─────────────────────────────────────────────
 
 #[test]
