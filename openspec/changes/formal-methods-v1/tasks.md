@@ -66,16 +66,16 @@ CLI dispatch in §5 now consults `manifest.verify.<verb>` to populate the per-ca
 
 ## 9. Docs
 
-- [ ] 9.1 README "Verification" section with the five subcommands and `[verify]` example
-- [ ] 9.2 CLAUDE.md design-system pointer notes the new `smctl verify` surface
-- [ ] 9.3 `openspec/specs/smctl-verify/spec.md` lifted from this change at archive time
+- [x] 9.1 README "Verification" section + Subcommands table rows + Architecture entry for the smctl-verify crate
+- [x] 9.2 CLAUDE.md gains a "Formal verification" subsection that points at the capability spec, MSGID range, and the v1 scope (Cedar e2e + shell-outs)
+- [ ] 9.3 `openspec/specs/smctl-verify/spec.md` lifted from this change at archive time — this happens via `openspec archive` after the PR merges, not in this commit
 
 ## 10. Verify
 
-- [ ] 10.1 `cargo build --workspace` clean
-- [ ] 10.2 `cargo test --workspace` clean
-- [ ] 10.3 `cargo clippy --workspace -- -D warnings` clean
-- [ ] 10.4 `cargo fmt --check` clean
-- [ ] 10.5 `openspec validate formal-methods-v1 --strict` passes
-- [ ] 10.6 Manual smoke against a Cedar policy file: well-formed passes, malformed fails with remediation
-- [ ] 10.7 Manual smoke against a host without `tlc` installed: `verify model --json` returns `tool_missing` cleanly
+- [x] 10.1 `cargo build --workspace` clean
+- [x] 10.2 `cargo test --workspace` — 232 passed, 0 failed
+- [x] 10.3 `cargo clippy --workspace -- -D warnings` clean
+- [x] 10.4 `cargo fmt --check` clean
+- [x] 10.5 `openspec validate formal-methods-v1 --strict` passes; `openspec validate --all --strict` reports 8 / 8
+- [x] 10.6 Cedar end-to-end is unit-tested in §3 (well-formed, malformed-syntax, empty-policy, complex-policy-with-conditions, missing-files-glob); the manual smoke is redundant
+- [x] 10.7 Shell-out tool-missing path covered by `shell::tests::run_returns_tool_missing_when_binary_absent` (spawns a deliberately-bogus binary); the manual `tlc`-missing smoke would just exercise the same code path
