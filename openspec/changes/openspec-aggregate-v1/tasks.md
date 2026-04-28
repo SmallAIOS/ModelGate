@@ -2,14 +2,14 @@
 
 ## 1. smctl-spec crate API
 
-- [ ] 1.1 Add `smctl-workspace` as a path dep in `smctl-spec/Cargo.toml`
-- [ ] 1.2 Define `RepoSpecInfo { repo, info: SpecInfo }` and `RepoSpecRef { repo, name, openspec_dir }`
-- [ ] 1.3 Define `ResolveError { NotFound { name }, Ambiguous { matches: Vec<RepoSpecRef> } }`
-- [ ] 1.4 Implement `list_specs_across(repos: &[(String, PathBuf)]) -> Result<Vec<RepoSpecInfo>>`
-- [ ] 1.5 Implement `find_spec_in_repos(repos, name) -> Result<RepoSpecRef, ResolveError>` with the four-rule resolution table from design Decision 2
-- [ ] 1.6 Implement `archive_in_repo(openspec_dir, name) -> PathBuf` — same shape as `archive` but the function asserts the path stays inside the given openspec dir
-- [ ] 1.7 Implement `inject_synthetic_workspace_repo(workspace_root, &mut repos)` — adds the `_workspace` entry when the workspace root has its own `openspec/` and no registered repo already covers it (Decision 4)
-- [ ] 1.8 Unit tests with two-repo fixtures: list aggregation, qualified resolve, ambiguous resolve, not-found resolve, archive moves to right tree, synthetic-_workspace add, synthetic-_workspace dedup
+- [x] 1.1 `smctl-workspace` already a path dep — no Cargo.toml change needed
+- [x] 1.2 `RepoSpecInfo { repo, info: SpecInfo }` (uses `#[serde(flatten)]` so JSON is one level) and `RepoSpecRef { repo, name, openspec_dir }` with a `.qualified()` helper
+- [x] 1.3 `ResolveError { NotFound { name }, Ambiguous { name, matches } }` via `thiserror`. The `Display` impl for `Ambiguous` lists every match's repo and shows one canonical qualified form as a remediation hint.
+- [x] 1.4 `list_specs_across(repos)` walks each repo's `openspec/changes/`, skips repos whose openspec dir is absent (matches the existing single-root forgiveness), returns flat `Vec<RepoSpecInfo>`
+- [x] 1.5 `find_spec_in_repos(repos, input)` — qualified `repo:name` direct lookup, bare-name unambiguous, bare-name ambiguous, not-found
+- [x] 1.6 `archive_in_repo(openspec_dir, name)` — thin wrapper around the existing `archive` for documentation intent; same return type
+- [x] 1.7 `inject_synthetic_workspace_repo(workspace_root, "openspec", repos)` — adds the `_workspace` entry when needed; de-dupes against an explicit repo by canonicalised path
+- [x] 1.8 Eleven unit tests with two-repo fixtures: aggregation, empty input, repo-without-openspec, qualified-direct, bare-unambiguous, bare-ambiguous, not-found, qualified-unknown-repo, qualified-unknown-name, archive-into-repo-tree, synthetic-add, synthetic-skip-when-no-dir, synthetic-dedup-against-explicit
 
 ## 2. CLI dispatch
 

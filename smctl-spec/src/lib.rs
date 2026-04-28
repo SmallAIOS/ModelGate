@@ -301,6 +301,184 @@ pub fn archive(openspec_dir: &Path, name: &str) -> Result<PathBuf> {
     Ok(dest)
 }
 
+// --- Per-repo aggregation ---
+//
+// Multi-repo workspaces hold one openspec/ tree per registered repo.
+// The functions below extend the single-root API above to walk a
+// slice of (repo_name, openspec_dir) pairs and either aggregate or
+// resolve. The CLI is responsible for assembling the slice from
+// `smctl_workspace::WorkspaceManifest` — keeps this crate independent
+// of the manifest schema.
+
+/// One row in an aggregated `list_specs_across` result. Pairs the
+/// existing `SpecInfo` with the repo name that owns the spec.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoSpecInfo {
+    pub repo: String,
+    #[serde(flatten)]
+    pub info: SpecInfo,
+}
+
+/// Reference to a single spec inside a known repo. Returned by
+/// [`find_spec_in_repos`] so callers can dispatch the existing
+/// single-root helpers (`validate`, `spec_info`, `archive_in_repo`)
+/// against the resolved openspec_dir.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoSpecRef {
+    pub repo: String,
+    pub name: String,
+    pub openspec_dir: PathBuf,
+}
+
+impl RepoSpecRef {
+    /// Render in the canonical `repo:name` qualified form.
+    pub fn qualified(&self) -> String {
+        format!("{}:{}", self.repo, self.name)
+    }
+}
+
+/// Outcome of [`find_spec_in_repos`] when the bare-name path can't
+/// resolve a single ref.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ResolveError {
+    #[error("spec '{name}' not found in any registered repo")]
+    NotFound { name: String },
+
+    #[error(
+        "spec '{name}' is ambiguous — declared in {} repos: {}. \
+         Re-run with the qualified form to pick one (e.g. `{}`).",
+        matches.len(),
+        matches.iter().map(|m| m.repo.as_str()).collect::<Vec<_>>().join(", "),
+        matches.first().map(|m| m.qualified()).unwrap_or_default(),
+    )]
+    Ambiguous {
+        name: String,
+        matches: Vec<RepoSpecRef>,
+    },
+}
+
+/// List every active + archived spec across each registered repo.
+/// Empty `repos` returns an empty list (no error).
+pub fn list_specs_across(repos: &[(String, PathBuf)]) -> Result<Vec<RepoSpecInfo>> {
+    let mut out = Vec::new();
+    for (repo_name, openspec_dir) in repos {
+        // A registered repo without an openspec/ directory is fine —
+        // contribute nothing rather than erroring. Mirrors the
+        // single-root list_specs which returns Ok(vec![]) when the
+        // changes/ subdir is absent.
+        if !openspec_dir.exists() {
+            continue;
+        }
+        let specs = list_specs(openspec_dir)?;
+        for info in specs {
+            out.push(RepoSpecInfo {
+                repo: repo_name.clone(),
+                info,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve a spec name across registered repos.
+///
+/// See `openspec/changes/openspec-aggregate-v1/design.md` Decision 2
+/// for the four-rule resolution table:
+///
+/// 1. Qualified `repo:name` looks up directly.
+/// 2. Bare name in exactly one repo resolves unambiguously.
+/// 3. Bare name in multiple repos returns `Ambiguous`.
+/// 4. Bare name in no repo returns `NotFound`.
+pub fn find_spec_in_repos(
+    repos: &[(String, PathBuf)],
+    input: &str,
+) -> std::result::Result<RepoSpecRef, ResolveError> {
+    // Rule 1: qualified form.
+    if let Some((repo, name)) = input.split_once(':') {
+        let openspec_dir = repos
+            .iter()
+            .find(|(r, _)| r == repo)
+            .map(|(_, p)| p.clone())
+            .ok_or_else(|| ResolveError::NotFound {
+                name: input.to_string(),
+            })?;
+        let candidate = openspec_dir.join("changes").join(name);
+        if !candidate.exists() {
+            return Err(ResolveError::NotFound {
+                name: input.to_string(),
+            });
+        }
+        return Ok(RepoSpecRef {
+            repo: repo.to_string(),
+            name: name.to_string(),
+            openspec_dir,
+        });
+    }
+
+    // Rules 2–4: bare name across every repo.
+    let mut matches: Vec<RepoSpecRef> = Vec::new();
+    for (repo, openspec_dir) in repos {
+        let candidate = openspec_dir.join("changes").join(input);
+        if candidate.exists() {
+            matches.push(RepoSpecRef {
+                repo: repo.clone(),
+                name: input.to_string(),
+                openspec_dir: openspec_dir.clone(),
+            });
+        }
+    }
+    match matches.len() {
+        0 => Err(ResolveError::NotFound {
+            name: input.to_string(),
+        }),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        _ => Err(ResolveError::Ambiguous {
+            name: input.to_string(),
+            matches,
+        }),
+    }
+}
+
+/// Archive a spec in a specific repo's openspec tree. Same shape as
+/// [`archive`] but documents the per-repo intent.
+///
+/// Returns the absolute destination path under
+/// `<openspec_dir>/changes/archive/<YYYY-MM-DD>-<name>/`.
+pub fn archive_in_repo(openspec_dir: &Path, name: &str) -> Result<PathBuf> {
+    archive(openspec_dir, name)
+}
+
+/// Add a synthetic `_workspace` entry to `repos` when the workspace
+/// root carries its own `openspec/` directory and no registered repo
+/// already covers that path.
+///
+/// Solves the legacy single-repo case where a workspace was created
+/// before any `[[repos]]` entries were added — common in this very
+/// repo today. De-duplication is by absolute path of the openspec
+/// directory.
+pub fn inject_synthetic_workspace_repo(
+    workspace_root: &Path,
+    openspec_dirname: &str,
+    repos: &mut Vec<(String, PathBuf)>,
+) {
+    let synthetic_path = workspace_root.join(openspec_dirname);
+    if !synthetic_path.exists() {
+        return;
+    }
+    // Skip when an explicit repo already covers this path. Compare
+    // canonicalised paths so symlink / relative-form differences
+    // don't cause double-counts.
+    let synth_canon = synthetic_path.canonicalize().ok();
+    for (_, existing) in repos.iter() {
+        if let (Some(a), Some(b)) = (synth_canon.as_ref(), existing.canonicalize().ok().as_ref())
+            && a == b
+        {
+            return;
+        }
+    }
+    repos.push(("_workspace".to_string(), synthetic_path));
+}
+
 // --- Internal helpers ---
 
 fn build_spec_info(name: &str, path: &Path, phase: SpecPhase) -> Result<SpecInfo> {
@@ -440,5 +618,170 @@ mod tests {
         let result = validate(dir.path(), "bad-spec").unwrap();
         assert!(!result.valid);
         assert!(result.issues.iter().any(|i| i.contains("Why")));
+    }
+
+    // --- Per-repo aggregation ---
+
+    /// Build a fixture: two temp repos, each with one active spec.
+    /// Caller owns the `TempDir`s — keep them alive for the test.
+    fn two_repo_fixture() -> (tempfile::TempDir, tempfile::TempDir, Vec<(String, PathBuf)>) {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        new_spec(a.path(), "alpha").unwrap();
+        new_spec(b.path(), "beta").unwrap();
+        let repos = vec![
+            ("RepoA".to_string(), a.path().to_path_buf()),
+            ("RepoB".to_string(), b.path().to_path_buf()),
+        ];
+        (a, b, repos)
+    }
+
+    #[test]
+    fn list_specs_across_aggregates_two_repos() {
+        let (_a, _b, repos) = two_repo_fixture();
+        let specs = list_specs_across(&repos).unwrap();
+        // One row per spec; alpha came from RepoA, beta from RepoB.
+        assert_eq!(specs.len(), 2);
+        assert!(
+            specs
+                .iter()
+                .any(|s| s.repo == "RepoA" && s.info.name == "alpha")
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| s.repo == "RepoB" && s.info.name == "beta")
+        );
+    }
+
+    #[test]
+    fn list_specs_across_empty_input_returns_empty() {
+        let specs = list_specs_across(&[]).unwrap();
+        assert!(specs.is_empty());
+    }
+
+    #[test]
+    fn list_specs_across_skips_repo_without_openspec_dir() {
+        // First repo has openspec/, second doesn't.
+        let a = tempfile::tempdir().unwrap();
+        new_spec(a.path(), "only-spec").unwrap();
+        let b = tempfile::tempdir().unwrap(); // no openspec/
+
+        let repos = vec![
+            ("HasSpec".to_string(), a.path().to_path_buf()),
+            ("NoSpec".to_string(), b.path().join("openspec")),
+        ];
+        let specs = list_specs_across(&repos).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].repo, "HasSpec");
+    }
+
+    #[test]
+    fn find_spec_in_repos_qualified_resolves_directly() {
+        let (_a, _b, repos) = two_repo_fixture();
+        let r = find_spec_in_repos(&repos, "RepoA:alpha").unwrap();
+        assert_eq!(r.repo, "RepoA");
+        assert_eq!(r.name, "alpha");
+        assert_eq!(r.qualified(), "RepoA:alpha");
+    }
+
+    #[test]
+    fn find_spec_in_repos_bare_unambiguous() {
+        let (_a, _b, repos) = two_repo_fixture();
+        // alpha lives only in RepoA; bare name should resolve.
+        let r = find_spec_in_repos(&repos, "alpha").unwrap();
+        assert_eq!(r.repo, "RepoA");
+    }
+
+    #[test]
+    fn find_spec_in_repos_bare_ambiguous() {
+        // Both repos declare "shared" — bare lookup must error with
+        // both matches in the payload.
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        new_spec(a.path(), "shared").unwrap();
+        new_spec(b.path(), "shared").unwrap();
+        let repos = vec![
+            ("A".to_string(), a.path().to_path_buf()),
+            ("B".to_string(), b.path().to_path_buf()),
+        ];
+        let err = find_spec_in_repos(&repos, "shared").unwrap_err();
+        match err {
+            ResolveError::Ambiguous { matches, .. } => {
+                assert_eq!(matches.len(), 2);
+                let repos_in_match: Vec<&str> = matches.iter().map(|m| m.repo.as_str()).collect();
+                assert!(repos_in_match.contains(&"A"));
+                assert!(repos_in_match.contains(&"B"));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_spec_in_repos_not_found() {
+        let (_a, _b, repos) = two_repo_fixture();
+        let err = find_spec_in_repos(&repos, "nonexistent").unwrap_err();
+        assert!(matches!(err, ResolveError::NotFound { .. }));
+    }
+
+    #[test]
+    fn find_spec_in_repos_qualified_unknown_repo() {
+        let (_a, _b, repos) = two_repo_fixture();
+        let err = find_spec_in_repos(&repos, "WrongRepo:alpha").unwrap_err();
+        assert!(matches!(err, ResolveError::NotFound { .. }));
+    }
+
+    #[test]
+    fn find_spec_in_repos_qualified_unknown_name() {
+        let (_a, _b, repos) = two_repo_fixture();
+        let err = find_spec_in_repos(&repos, "RepoA:nonexistent").unwrap_err();
+        assert!(matches!(err, ResolveError::NotFound { .. }));
+    }
+
+    #[test]
+    fn archive_in_repo_moves_into_repo_archive_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        new_spec(dir.path(), "doomed").unwrap();
+        let dest = archive_in_repo(dir.path(), "doomed").unwrap();
+        // Must land under <openspec_dir>/changes/archive/<YYYY-MM-DD>-doomed.
+        assert!(dest.starts_with(dir.path().join("changes/archive/")));
+        assert!(
+            dest.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("-doomed")
+        );
+        assert!(!dir.path().join("changes/doomed").exists());
+    }
+
+    #[test]
+    fn inject_synthetic_workspace_repo_adds_when_dir_exists() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join("openspec/changes")).unwrap();
+        let mut repos: Vec<(String, PathBuf)> = Vec::new();
+        inject_synthetic_workspace_repo(workspace.path(), "openspec", &mut repos);
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].0, "_workspace");
+        assert_eq!(repos[0].1, workspace.path().join("openspec"));
+    }
+
+    #[test]
+    fn inject_synthetic_workspace_repo_skips_when_no_openspec_dir() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut repos: Vec<(String, PathBuf)> = Vec::new();
+        inject_synthetic_workspace_repo(workspace.path(), "openspec", &mut repos);
+        assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn inject_synthetic_workspace_repo_dedupes_against_explicit_repo() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join("openspec/changes")).unwrap();
+        // Pretend an explicit repo already covers the workspace path.
+        let mut repos = vec![("ModelGate".to_string(), workspace.path().join("openspec"))];
+        inject_synthetic_workspace_repo(workspace.path(), "openspec", &mut repos);
+        // Should remain a single entry (the explicit one).
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].0, "ModelGate");
     }
 }
