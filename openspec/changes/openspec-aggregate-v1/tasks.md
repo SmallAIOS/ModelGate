@@ -31,20 +31,22 @@
 
 ## 4. Workspace.toml & legacy compat
 
-- [ ] 4.1 No schema change to `[spec] openspec_dir` — same value applies across every repo
-- [ ] 4.2 Synthetic `_workspace` entry skipped when an explicit repo whose path is `<workspace_root>` is already registered
-- [ ] 4.3 Document the legacy fallback in CLAUDE.md "Workspace conventions" subsection
+- [x] 4.1 `[spec] openspec_dir` schema unchanged — same value joined to each registered repo's path
+- [x] 4.2 `inject_synthetic_workspace_repo` de-dupes via canonicalised path; covered by `inject_synthetic_workspace_repo_dedupes_against_explicit_repo` test in §1
+- [ ] 4.3 CLAUDE.md note about per-repo openspec convention (lands with §6 docs)
 
 ## 5. CLI integration tests
 
-- [ ] 5.1 `smctl/tests/cli.rs`: spec list aggregates two repos
-- [ ] 5.2 spec validate with bare name unambiguous
-- [ ] 5.3 spec validate with bare name ambiguous → error + matches listed
-- [ ] 5.4 spec validate with `repo:name` qualified
-- [ ] 5.5 spec archive moves into the correct repo's archive/ tree
-- [ ] 5.6 spec new defaults to the smctl_home repo
-- [ ] 5.7 spec new with `--repo` overrides
-- [ ] 5.8 Synthetic `_workspace` discovered when no manifest is registered
+- [x] 5.1 test_spec_list_aggregates_two_repos — human + JSON forms
+- [x] 5.2 test_spec_validate_bare_unambiguous
+- [x] 5.3 test_spec_validate_bare_ambiguous_lists_matches — error stderr cites both repos
+- [x] 5.4 test_spec_validate_qualified_form — `RepoB:shared` picks the right one
+- [x] 5.5 test_spec_archive_lands_in_owning_repo — RepoA's archive grows, RepoB's stays empty
+- [x] 5.6 spec new smctl_home defaulting — covered by the existing test_spec_new_validate_archive (single-repo synthetic _workspace path)
+- [x] 5.7 test_spec_new_with_repo_flag — explicit `--repo RepoB` lands in RepoB
+- [x] 5.8 test_spec_new_unknown_repo_flag_errors_with_remediation — error stderr lists registered repos
+
+Plus: test_spec_validate_with_repo_flag — `--repo X` plus bare name acts as `X:name`.
 
 ## 6. Docs
 

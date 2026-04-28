@@ -1347,3 +1347,204 @@ fn test_quality_complexity_json_shape() {
         assert!(obj.contains_key("remediation"), "missing 'remediation' key");
     }
 }
+
+// ── Per-repo spec aggregation ──────────────────────────────────────
+
+/// Build a fixture: a workspace at `dir` registering two repos at
+/// `dir/{repo_a,repo_b}`, each pre-seeded with one openspec change.
+/// Returns the workspace root path.
+fn two_repo_spec_fixture(
+    dir: &Path,
+    a_spec: Option<&str>,
+    b_spec: Option<&str>,
+) -> std::path::PathBuf {
+    let repo_a = dir.join("repo_a");
+    let repo_b = dir.join("repo_b");
+    std::fs::create_dir_all(&repo_a).unwrap();
+    std::fs::create_dir_all(&repo_b).unwrap();
+    if let Some(name) = a_spec {
+        smctl_spec::new_spec(&repo_a.join("openspec"), name).unwrap();
+    }
+    if let Some(name) = b_spec {
+        smctl_spec::new_spec(&repo_b.join("openspec"), name).unwrap();
+    }
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let toml_text = format!(
+        r#"[workspace]
+name = "agg-ws"
+root = "."
+
+[[repos]]
+name = "RepoA"
+url = "file://{a}"
+path = "{a}"
+default_branch = "main"
+
+[[repos]]
+name = "RepoB"
+url = "file://{b}"
+path = "{b}"
+default_branch = "main"
+"#,
+        a = repo_a.display(),
+        b = repo_b.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), toml_text).unwrap();
+    dir.to_path_buf()
+}
+
+#[test]
+fn test_spec_list_aggregates_two_repos() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("alpha"), Some("beta"));
+
+    // Human output groups by repo with one heading per repo. The
+    // spec subcommand doesn't auto-fall-back to JSON on non-TTY, so
+    // assert_cmd captures the grouped human output verbatim.
+    smctl()
+        .args(["spec", "list", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA\n"))
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("RepoB\n"))
+        .stdout(predicate::str::contains("beta"));
+
+    // --json output is the flat array.
+    smctl()
+        .args(["spec", "list", "--json", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"repo\": \"RepoA\""))
+        .stdout(predicate::str::contains("\"repo\": \"RepoB\""));
+}
+
+#[test]
+fn test_spec_validate_bare_unambiguous() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("alpha"), Some("beta"));
+
+    // alpha lives only in RepoA; bare lookup must succeed.
+    smctl()
+        .args(["spec", "validate", "alpha", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:alpha"));
+}
+
+#[test]
+fn test_spec_validate_bare_ambiguous_lists_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    // Both repos declare "shared" — bare resolve must error and
+    // tell the operator how to disambiguate.
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    smctl()
+        .args(["spec", "validate", "shared", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous"))
+        .stderr(predicate::str::contains("RepoA"))
+        .stderr(predicate::str::contains("RepoB"));
+}
+
+#[test]
+fn test_spec_validate_qualified_form() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    // Qualified form picks one of two ambiguous matches.
+    smctl()
+        .args(["spec", "validate", "RepoB:shared", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoB:shared"));
+}
+
+#[test]
+fn test_spec_validate_with_repo_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    // --repo X plus bare name == X:name.
+    smctl()
+        .args(["spec", "validate", "shared", "--repo", "RepoA", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:shared"));
+}
+
+#[test]
+fn test_spec_archive_lands_in_owning_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), Some("alpha"), None);
+
+    smctl()
+        .args(["spec", "archive", "RepoA:alpha", "-w"])
+        .arg(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:alpha"));
+
+    // Spec moved out of RepoA's active changes.
+    assert!(!dir.path().join("repo_a/openspec/changes/alpha").exists());
+    // And landed under RepoA's archive tree, not RepoB's.
+    let archive_a = dir.path().join("repo_a/openspec/changes/archive");
+    let archive_b = dir.path().join("repo_b/openspec/changes/archive");
+    let entries_a: Vec<_> = std::fs::read_dir(&archive_a).unwrap().collect();
+    assert_eq!(
+        entries_a.len(),
+        1,
+        "RepoA's archive should hold the moved spec"
+    );
+    assert!(
+        !archive_b.exists() || std::fs::read_dir(&archive_b).unwrap().next().is_none(),
+        "RepoB's archive should stay empty"
+    );
+}
+
+#[test]
+fn test_spec_new_with_repo_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), None, None);
+
+    smctl()
+        .args(["spec", "new", "fresh-spec", "--repo", "RepoB", "-w"])
+        .arg(&workspace)
+        .assert()
+        .success();
+
+    // New spec must land in RepoB's openspec/, not RepoA's.
+    assert!(
+        dir.path()
+            .join("repo_b/openspec/changes/fresh-spec/proposal.md")
+            .exists()
+    );
+    assert!(
+        !dir.path()
+            .join("repo_a/openspec/changes/fresh-spec")
+            .exists()
+    );
+}
+
+#[test]
+fn test_spec_new_unknown_repo_flag_errors_with_remediation() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), None, None);
+
+    smctl()
+        .args(["spec", "new", "fresh-spec", "--repo", "DoesNotExist", "-w"])
+        .arg(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("DoesNotExist"))
+        .stderr(predicate::str::contains("RepoA"))
+        .stderr(predicate::str::contains("RepoB"));
+}
