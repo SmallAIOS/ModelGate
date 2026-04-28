@@ -13,13 +13,13 @@
 
 ## 2. CLI dispatch
 
-- [ ] 2.1 `Commands::Spec` dispatch: build the `Vec<(String, PathBuf)>` from `manifest.repos` once, then pass to every subcommand handler
-- [ ] 2.2 `SpecCommands::List` calls `list_specs_across` and renders grouped (TTY) or flat JSON (non-TTY / `--json`)
-- [ ] 2.3 `SpecCommands::Validate / Status / Ff / Apply` each call `find_spec_in_repos`, then dispatch into `smctl-spec`'s existing single-root helpers using the resolved `RepoSpecRef.openspec_dir`
-- [ ] 2.4 `SpecCommands::Archive` resolves with `find_spec_in_repos`, then calls `archive_in_repo`
-- [ ] 2.5 `SpecCommands::New` accepts `--repo <name>`, defaults to the `smctl_home: true` repo, falls back to the only registered repo, errors with remediation when both fall-throughs miss
-- [ ] 2.6 Disambiguation error path renders the qualified `repo:name` matches with a remediation clause
-- [ ] 2.7 Synthetic `_workspace` repo discovered via `inject_synthetic_workspace_repo` so the migration path is automatic
+- [x] 2.1 Prelude builds `Vec<(String, PathBuf)>` from `manifest.repos` once, plus the `inject_synthetic_workspace_repo` synthetic entry, plus a final fallback for fresh-workspace `spec new` (zero registered repos and no openspec/ yet)
+- [x] 2.2 `SpecCommands::List` calls `list_specs_across` + new `render_repo_specs` helper. Human form groups by repo with one heading per repo; JSON form is the flat array `serde_json` produces from `RepoSpecInfo` (top-level `repo` field)
+- [x] 2.3 `SpecCommands::Validate / Status / Ff / Apply` each call the new `resolve_existing_spec` helper which honours `--repo` as sugar for `repo:name`; result piped into the existing single-root validate / spec_info helpers via the resolved `RepoSpecRef.openspec_dir`
+- [x] 2.4 `SpecCommands::Archive` resolves with `resolve_existing_spec`, calls `archive_in_repo`, output reads `archived spec 'repo:name' to <dest>`
+- [x] 2.5 `SpecCommands::New` accepts `--repo <name>`; resolution order in `resolve_new_target`: explicit flag → `smctl_home` repo → single-repo fallback → error with remediation listing the registered repos
+- [x] 2.6 `ResolveError::Display` includes the three-part remediation per design-system-v1: NotFound suggests `smctl spec list`/`new`; Ambiguous lists every match's repo and shows the qualified `smctl spec validate repo:name` next-step
+- [x] 2.7 Synthetic `_workspace` repo discovered via `inject_synthetic_workspace_repo`; legacy single-repo workspaces continue working without manifest changes
 
 ## 3. MCP tools
 

@@ -338,15 +338,21 @@ impl RepoSpecRef {
 }
 
 /// Outcome of [`find_spec_in_repos`] when the bare-name path can't
-/// resolve a single ref.
+/// resolve a single ref. Display impls follow the three-part
+/// remediation pattern from `design-system-v1`: what happened, what
+/// it means, what to do next.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ResolveError {
-    #[error("spec '{name}' not found in any registered repo")]
+    #[error(
+        "spec '{name}' not found in any registered repo. \
+         Resolution had no openspec/changes/{name} dir to point at. \
+         Run `smctl spec list` to enumerate registered specs, or `smctl spec new {name}` to create it."
+    )]
     NotFound { name: String },
 
     #[error(
         "spec '{name}' is ambiguous — declared in {} repos: {}. \
-         Re-run with the qualified form to pick one (e.g. `{}`).",
+         Re-run with the qualified form to pick one (e.g. `smctl spec validate {}`).",
         matches.len(),
         matches.iter().map(|m| m.repo.as_str()).collect::<Vec<_>>().join(", "),
         matches.first().map(|m| m.qualified()).unwrap_or_default(),

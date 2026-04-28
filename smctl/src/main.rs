@@ -349,33 +349,54 @@ enum SpecCommands {
     New {
         /// Spec name
         name: String,
+        /// Repo to scaffold the spec into (default: smctl_home repo,
+        /// or the only registered repo when one exists).
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Fast-forward: check document completeness
     Ff {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        /// Disambiguate the spec by repo when bare (`--repo X` is
+        /// equivalent to passing `X:<name>`).
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Execute tasks from tasks.md
     Apply {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Archive a completed spec
     Archive {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Check spec completeness
     Validate {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Show spec progress
     Status {
-        /// Spec name (default: show all)
+        /// Spec name in either bare or qualified form. Omit to show
+        /// every spec across every registered repo.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
-    /// List all specs
+    /// List all specs across every registered repo
     List,
 }
 
@@ -714,6 +735,101 @@ fn render_verify_report_human(report: &smctl_verify::VerifyReport) {
             println!("  - {d}");
         }
     }
+}
+
+/// Choose the openspec_dir for `smctl spec new`. Resolution order:
+///
+/// 1. `--repo <name>` — find that repo entry, use its openspec_dir.
+/// 2. The repo entry whose `[[repos]]` declared `smctl_home = true`.
+/// 3. The single registered repo, when only one is present (covers
+///    legacy single-repo workspaces and the synthetic `_workspace`).
+/// 4. Otherwise: error with a remediation clause that lists the
+///    registered repos and tells the operator to pass `--repo`.
+fn resolve_new_target(
+    repos: &[(String, std::path::PathBuf)],
+    manifest: &smctl_workspace::WorkspaceManifest,
+    repo_flag: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    if let Some(name) = repo_flag {
+        let target = repos
+            .iter()
+            .find(|(r, _)| r == name)
+            .with_context(|| {
+                let known: Vec<&str> = repos.iter().map(|(r, _)| r.as_str()).collect();
+                format!(
+                    "repo '{name}' is not registered in this workspace. \
+                     Known repos: {known:?}. \
+                     Pass `--repo <name>` with one of those, or `smctl workspace add` the repo first."
+                )
+            })?;
+        return Ok(target.1.clone());
+    }
+
+    if let Some(home) = manifest.repos.iter().find(|r| r.smctl_home)
+        && let Some((_, dir)) = repos.iter().find(|(r, _)| r == &home.name)
+    {
+        return Ok(dir.clone());
+    }
+
+    if repos.len() == 1 {
+        return Ok(repos[0].1.clone());
+    }
+
+    anyhow::bail!(
+        "no target repo for `smctl spec new`. \
+         The workspace has multiple registered repos and no `[[repos]]` entry declares `smctl_home = true`. \
+         Pass `--repo <name>` to pick one of: {:?}.",
+        repos.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>()
+    )
+}
+
+/// Resolve a spec name into a `RepoSpecRef` honouring `--repo` when
+/// set. Bare names are dispatched into [`smctl_spec::find_spec_in_repos`]
+/// which enforces the four-rule resolution table; `--repo X` plus a
+/// bare name `Y` is sugar for the qualified `X:Y`.
+fn resolve_existing_spec(
+    repos: &[(String, std::path::PathBuf)],
+    name: Option<&str>,
+    repo_flag: Option<&str>,
+) -> Result<smctl_spec::RepoSpecRef> {
+    let name = name.context(
+        "spec name required. \
+         Pass a bare name like `foo-v1`, the qualified form `repo:foo-v1`, or use `--repo <r>` plus a bare name. \
+         Run `smctl spec list` to see registered specs.",
+    )?;
+    let lookup_input = match repo_flag {
+        Some(r) if !name.contains(':') => format!("{r}:{name}"),
+        _ => name.to_string(),
+    };
+    smctl_spec::find_spec_in_repos(repos, &lookup_input).map_err(|e| anyhow::anyhow!(e))
+}
+
+/// Render a `Vec<RepoSpecInfo>` for human or JSON output. Human form
+/// groups specs by repo (one heading per repo); JSON form is the flat
+/// array `serde_json` produces from `RepoSpecInfo` directly.
+fn render_repo_specs(specs: &[smctl_spec::RepoSpecInfo], fmt: OutputFormat) -> String {
+    let specs_owned: Vec<smctl_spec::RepoSpecInfo> = specs.to_vec();
+    format_output_with(&specs_owned, fmt, |entries| {
+        if entries.is_empty() {
+            return "no specs found".to_string();
+        }
+        let mut out = String::new();
+        let mut current_repo = "";
+        for s in entries {
+            if s.repo != current_repo {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{}\n", s.repo));
+                current_repo = s.repo.as_str();
+            }
+            out.push_str(&format!(
+                "  {:<24} {:?}  [{}/{}]\n",
+                s.info.name, s.info.phase, s.info.tasks_done, s.info.tasks_total
+            ));
+        }
+        out.trim_end().to_string()
+    })
 }
 
 fn human_bytes(n: u64) -> String {
@@ -1365,16 +1481,51 @@ async fn run(cli: Cli) -> Result<i32> {
         Commands::Spec { command } => {
             let root = resolve_root()?;
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
-            let openspec_dir = root.join(&manifest.spec.openspec_dir);
+
+            // Build the per-repo (name, openspec_dir) slice the
+            // smctl-spec aggregating API expects. Manifest [[repos]]
+            // entries first, then a synthetic _workspace entry for
+            // legacy single-repo workspaces (de-duplicated by path).
+            let mut repos: Vec<(String, std::path::PathBuf)> = manifest
+                .repos
+                .iter()
+                .map(|r| {
+                    let path = r
+                        .path
+                        .clone()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| root.join(&r.name));
+                    (r.name.clone(), path.join(&manifest.spec.openspec_dir))
+                })
+                .collect();
+            smctl_spec::inject_synthetic_workspace_repo(
+                &root,
+                &manifest.spec.openspec_dir,
+                &mut repos,
+            );
+            // Final safety net: when no repo is registered and no
+            // openspec/ exists yet (fresh workspace, first `spec new`),
+            // synthesise a `_workspace` entry pointing at where the
+            // tree will land. inject_synthetic_workspace_repo bails
+            // when the directory is absent, which is fine for
+            // listing — but `spec new` needs a target.
+            if repos.is_empty() {
+                repos.push((
+                    "_workspace".to_string(),
+                    root.join(&manifest.spec.openspec_dir),
+                ));
+            }
 
             match command {
-                SpecCommands::New { name } => {
+                SpecCommands::New { name, repo } => {
+                    let target_dir = resolve_new_target(&repos, &manifest, repo.as_deref())?;
+
                     if dry_run {
-                        println!("would create spec '{name}'");
+                        println!("would create spec '{name}' in {}", target_dir.display());
                         return Ok(exit_code::DRY_RUN);
                     }
 
-                    let info = smctl_spec::new_spec(&openspec_dir, &name)?;
+                    let info = smctl_spec::new_spec(&target_dir, &name)?;
                     tracing::info!(
                         msgid = %smctl_log::MsgId::SpecCreated,
                         name = %info.name,
@@ -1415,19 +1566,20 @@ async fn run(cli: Cli) -> Result<i32> {
 
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Validate { name } => {
-                    let spec_name = name.context("spec name required")?;
-                    let result = smctl_spec::validate(&openspec_dir, &spec_name)?;
+                SpecCommands::Validate { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let result = smctl_spec::validate(&r.openspec_dir, &r.name)?;
+                    let qualified = r.qualified();
                     println!(
                         "{}",
-                        format_output_with(&result, fmt, |r| {
-                            if r.valid {
-                                format!("spec '{}' is valid", r.name)
+                        format_output_with(&result, fmt, |result_ref| {
+                            if result_ref.valid {
+                                format!("spec '{qualified}' is valid")
                             } else {
                                 format!(
-                                    "spec '{}' has issues:\n{}",
-                                    r.name,
-                                    r.issues
+                                    "spec '{qualified}' has issues:\n{}",
+                                    result_ref
+                                        .issues
                                         .iter()
                                         .map(|i| format!("  - {i}"))
                                         .collect::<Vec<_>>()
@@ -1442,84 +1594,57 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::SPEC_ERROR)
                     }
                 }
-                SpecCommands::Status { name } => {
+                SpecCommands::Status { name, repo } => {
                     if let Some(name) = name {
-                        let info = smctl_spec::spec_info(&openspec_dir, &name)?;
+                        let r = resolve_existing_spec(&repos, Some(&name), repo.as_deref())?;
+                        let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
+                        let qualified = r.qualified();
                         println!(
                             "{}",
                             format_output_with(&info, fmt, |i| {
                                 format!(
                                     "{}: {:?} [{}/{}]",
-                                    i.name, i.phase, i.tasks_done, i.tasks_total
+                                    qualified, i.phase, i.tasks_done, i.tasks_total
                                 )
                             })
                         );
                     } else {
-                        let specs = smctl_spec::list_specs(&openspec_dir)?;
-                        println!(
-                            "{}",
-                            format_output_with(&specs, fmt, |ss| {
-                                ss.iter()
-                                    .map(|s| {
-                                        format!(
-                                            "  {:<24} {:?}  [{}/{}]",
-                                            s.name, s.phase, s.tasks_done, s.tasks_total
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            })
-                        );
+                        let specs = smctl_spec::list_specs_across(&repos)?;
+                        println!("{}", render_repo_specs(&specs, fmt));
                     }
                     Ok(exit_code::SUCCESS)
                 }
                 SpecCommands::List => {
-                    let specs = smctl_spec::list_specs(&openspec_dir)?;
-                    println!(
-                        "{}",
-                        format_output_with(&specs, fmt, |ss| {
-                            if ss.is_empty() {
-                                "no specs found".to_string()
-                            } else {
-                                ss.iter()
-                                    .map(|s| {
-                                        format!(
-                                            "  {:<24} {:?}  [{}/{}]",
-                                            s.name, s.phase, s.tasks_done, s.tasks_total
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            }
-                        })
-                    );
+                    let specs = smctl_spec::list_specs_across(&repos)?;
+                    println!("{}", render_repo_specs(&specs, fmt));
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Archive { name } => {
-                    let spec_name = name.context("spec name required")?;
+                SpecCommands::Archive { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let qualified = r.qualified();
                     if dry_run {
-                        println!("would archive spec '{spec_name}'");
+                        println!("would archive spec '{qualified}'");
                         return Ok(exit_code::DRY_RUN);
                     }
-                    let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
+                    let dest = smctl_spec::archive_in_repo(&r.openspec_dir, &r.name)?;
                     tracing::info!(
                         msgid = %smctl_log::MsgId::SpecArchived,
-                        name = %spec_name,
+                        name = %qualified,
                         path = %dest.display(),
                         "spec archived"
                     );
-                    println!("archived spec '{}' to {}", spec_name, dest.display());
+                    println!("archived spec '{qualified}' to {}", dest.display());
 
                     // Auto-finish feature branch if workspace is available
                     if let Ok(root) = resolve_root()
                         && let Ok(manifest) =
                             smctl_workspace::WorkspaceManifest::load_from_root(&root)
                     {
-                        match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
+                        match smctl_flow::feature_finish(&root, &manifest, &r.name) {
                             Ok(result) => {
                                 tracing::info!(
                                     msgid = %smctl_log::MsgId::FeatureFinished,
-                                    name = %spec_name,
+                                    name = %r.name,
                                     branch = %result.branch_name,
                                     "feature branch merged"
                                 );
@@ -1537,14 +1662,12 @@ async fn run(cli: Cli) -> Result<i32> {
 
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Ff { name } => {
-                    let spec_name = name.context("spec name required")?;
+                SpecCommands::Ff { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let result = smctl_spec::validate(&r.openspec_dir, &r.name)?;
+                    let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
 
-                    // Validate document completeness
-                    let result = smctl_spec::validate(&openspec_dir, &spec_name)?;
-                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
-
-                    println!("spec: {spec_name}");
+                    println!("spec: {}", r.qualified());
                     println!("phase: {:?}", info.phase);
                     println!(
                         "documents: proposal={} design={} tasks={}",
@@ -1574,13 +1697,15 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::GENERAL_ERROR)
                     }
                 }
-                SpecCommands::Apply { name } => {
-                    let spec_name = name.context("spec name required")?;
-                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
+                SpecCommands::Apply { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
+                    let qualified = r.qualified();
 
                     if !info.has_tasks {
                         anyhow::bail!(
-                            "spec '{spec_name}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {spec_name}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {spec_name}` and recreating with `smctl spec new {spec_name}`."
+                            "spec '{qualified}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {qualified}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {qualified}` and recreating with `smctl spec new {}`.",
+                            r.name
                         );
                     }
 
@@ -1604,7 +1729,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
 
                     println!(
-                        "spec: {spec_name} — {}/{} tasks complete",
+                        "spec: {qualified} — {}/{} tasks complete",
                         done.len(),
                         done.len() + pending.len()
                     );

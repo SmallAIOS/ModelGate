@@ -220,7 +220,12 @@ fn test_spec_new_validate_archive() {
         .arg(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("archived spec 'test-feature'"));
+        // Output now uses the qualified `repo:name` form. In a single-
+        // repo workspace with no [[repos]] entries the repo is the
+        // synthetic `_workspace` entry the dispatcher adds.
+        .stdout(predicate::str::contains(
+            "archived spec '_workspace:test-feature'",
+        ));
 
     // Original should be gone
     assert!(!dir.path().join("openspec/changes/test-feature").exists());
