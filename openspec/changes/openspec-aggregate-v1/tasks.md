@@ -23,11 +23,11 @@
 
 ## 3. MCP tools
 
-- [ ] 3.1 `smctl_spec_list` tool: empty params (workspace already known); returns `[{repo, name, phase, ...}]`
-- [ ] 3.2 `smctl_spec_validate` tool: `{ name, repo? }` params; resolves with `find_spec_in_repos`
-- [ ] 3.3 `smctl_spec_archive` tool: `{ name, repo? }` params; resolves then calls `archive_in_repo`
-- [ ] 3.4 `smctl_spec_new` tool: `{ name, repo? }` — same defaulting rules as the CLI
-- [ ] 3.5 stdio_handshake integration test: `smctl_spec_list` against a fixture with two repos returns aggregated entries; `smctl_spec_validate` with bare name resolves; ambiguous bare name returns an error envelope citing both matches
+- [x] 3.1 `smctl_spec_list` tool: aggregates via `list_specs_across`; envelope shape `{ specs: [{repo, name, phase, ...}] }` — `RepoSpecInfo` flattens so the JSON is one level
+- [x] 3.2 `smctl_spec_validate` tool: `SpecByNameParams { name, repo? }`; resolves via the new `SmctlServer::resolve_spec_ref` helper; envelope wraps the `ValidationResult` with a top-level `qualified` field
+- [x] 3.3 `smctl_spec_archive` tool: same resolution; calls `archive_in_repo` so the archive lands in the repo's tree, not the workspace root; envelope reports `repo`, `name`, `qualified`, `archive_path`
+- [x] 3.4 `smctl_spec_new` tool: same defaulting rules as the CLI (`repo` flag → `smctl_home` → single-repo); errors with three-part remediation when no rule matches
+- [x] 3.5 stdio_handshake integration extended: scaffold a spec via `smctl_spec_new`, re-list and assert the entry carries `repo: "_workspace"`, validate via the qualified `_workspace:mcp-aggregate-fixture` form and assert the response carries the `qualified` field, and probe a missing-name error to confirm the `smctl spec list` remediation surfaces in the envelope
 
 ## 4. Workspace.toml & legacy compat
 
