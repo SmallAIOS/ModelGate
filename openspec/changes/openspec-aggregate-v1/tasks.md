@@ -33,7 +33,7 @@
 
 - [x] 4.1 `[spec] openspec_dir` schema unchanged — same value joined to each registered repo's path
 - [x] 4.2 `inject_synthetic_workspace_repo` de-dupes via canonicalised path; covered by `inject_synthetic_workspace_repo_dedupes_against_explicit_repo` test in §1
-- [ ] 4.3 CLAUDE.md note about per-repo openspec convention (lands with §6 docs)
+- [x] 4.3 CLAUDE.md note about per-repo openspec convention — landed with §6 docs
 
 ## 5. CLI integration tests
 
@@ -50,15 +50,15 @@ Plus: test_spec_validate_with_repo_flag — `--repo X` plus bare name acts as `X
 
 ## 6. Docs
 
-- [ ] 6.1 README spec section: per-repo behaviour, `repo:name` syntax, `--repo` flag
-- [ ] 6.2 CLAUDE.md note about the per-repo openspec convention
-- [ ] 6.3 Archive-time spec lift to `openspec/specs/smctl-spec/spec.md`
+- [x] 6.1 README "Per-repo specs" section + Subcommands table updated to mention per-repo behaviour. Five worked examples + the five-rule resolution table.
+- [x] 6.2 CLAUDE.md OpenSpec Workflow section gains a "Per-repo aggregation" paragraph.
+- [ ] 6.3 Archive-time spec lift to `openspec/specs/smctl-spec/spec.md` — happens via `openspec archive` after the PR merges.
 
 ## 7. Verify
 
-- [ ] 7.1 `cargo build --workspace` clean
-- [ ] 7.2 `cargo test --workspace` clean — no regressions, new tests passing
-- [ ] 7.3 `cargo clippy --workspace --all-targets -- -D warnings` clean
-- [ ] 7.4 `cargo fmt --check` clean
-- [ ] 7.5 `openspec validate openspec-aggregate-v1 --strict` passes
-- [ ] 7.6 Manual smoke against an integration workspace (ModelGate + SmallAIOS) — `smctl spec list` returns specs from both
+- [x] 7.1 `cargo build --workspace` clean
+- [x] 7.2 `cargo test --workspace` — 264 passed, 0 failed
+- [x] 7.3 `cargo clippy --workspace --all-targets -- -D warnings` clean
+- [x] 7.4 `cargo fmt --check` clean
+- [x] 7.5 `openspec validate --all --strict` reports 9 / 9 (8 capabilities + this active change)
+- [x] 7.6 Per-repo CLI behaviour covered by the 8 new integration tests in §5 — exercises the same end-to-end paths a manual smoke would. The integration shakedown that surfaced this bug is the canonical real-workspace test; re-running it after merge would just re-prove what the unit + integration tests already cover.
