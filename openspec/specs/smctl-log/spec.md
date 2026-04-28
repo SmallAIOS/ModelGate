@@ -3,9 +3,7 @@
 ## Purpose
 
 `smctl-log` is the RFC 5424 tracing subscriber and MSGID catalog used by every other crate in the workspace. It owns the wire format, the transport selection, and the message-id allocation. Callers emit events with the `tracing` macros; the subscriber renders them.
-
 ## Requirements
-
 ### Requirement: RFC 5424 wire format
 
 `smctl-log` SHALL emit log records that conform to [RFC 5424](https://datatracker.ietf.org/doc/html/rfc5424). Every record MUST include the priority, timestamp, hostname, app-name, procid, msgid, structured-data, and message fields in the canonical order.
@@ -25,6 +23,7 @@ The MSGID catalog SHALL allocate ranges per producer crate. The allocation table
 - `SMCTL-0200..0299` — smctl-mcp
 - `SMCTL-0300..0399` — modelgate-web
 - `SMCTL-0400..0499` — smctl-quality
+- `SMCTL-0500..0599` — smctl-verify
 
 #### Scenario: Web MSGID is in range
 
@@ -37,6 +36,12 @@ The MSGID catalog SHALL allocate ranges per producer crate. The allocation table
 - **WHEN** the operator inspects `MsgId::QualityCheckStarted.code()`
 - **THEN** the returned value MUST be `400`
 - **AND** the value MUST satisfy `(400..=499).contains(&code)`
+
+#### Scenario: Verify MSGID is in range
+
+- **WHEN** the operator inspects `MsgId::VerifyStarted.code()`
+- **THEN** the returned value MUST be `501`
+- **AND** the value MUST satisfy `(500..=599).contains(&code)`
 
 ### Requirement: Multi-transport delivery
 
