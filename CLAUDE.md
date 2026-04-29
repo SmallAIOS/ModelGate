@@ -48,6 +48,8 @@ Changes follow the OpenSpec spec-driven development lifecycle:
 
 Specs live in `openspec/changes/<name>/` with: `.openspec.yaml`, `proposal.md`, `design.md`, `tasks.md`, `specs/`.
 
+**Per-repo aggregation.** Every registered `[[repos]]` entry carries its own `openspec/` tree. `smctl spec list/validate/apply/archive/status/ff` walk every repo and aggregate; single-spec verbs accept either a bare name (when unambiguous) or the qualified `repo:name` form. `--repo X` plus a bare name is equivalent to `X:name`. `spec new` resolves its target repo via `--repo` → `smctl_home` repo → the only registered repo. Single-repo workspaces with a workspace-level `openspec/` are auto-discovered as a synthetic `_workspace` repo.
+
 ## Conventions
 
 - `.local/` — AI-generated scratch, temp files, things not for git. Listed in .gitignore.

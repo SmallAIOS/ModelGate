@@ -75,12 +75,12 @@ smctl spec archive my-feature         # archive spec + merge feature branch
 | `flow feature start/finish/list` | Feature branch operations |
 | `flow release start/finish/list` | Release branch operations |
 | `flow hotfix start/finish/list` | Hotfix branch operations |
-| `spec new` | Scaffold openspec feature folder + branch |
+| `spec new` | Scaffold openspec feature folder + branch (per-repo: see Per-repo specs below) |
 | `spec ff` | Fast-forward validation (document completeness + task progress) |
 | `spec apply` | List pending and completed tasks |
 | `spec validate` | Check required sections in spec documents |
-| `spec list` | List all specs (active + archived) |
-| `spec archive` | Move spec to archive + finish feature branch |
+| `spec list` | List all specs across every registered repo |
+| `spec archive` | Move spec into the owning repo's archive + finish feature branch |
 | `build` | Build repos in dependency order |
 | `quality audit/deps/unsafe/dsm/complexity` | Engineering-quality checks |
 | `gate status` | Show health and summary metadata of a running ModelGate instance |
@@ -222,6 +222,28 @@ smctl gate web --port 9400   # use a different port
 The dashboard mirrors the CLI surface: Overview reads `/api/health`, Models reads `/api/models`, Policy and Terminal render placeholder states until the upstream endpoints ship. For frontend development run `npm run dev` in `ui/modelgate-web/` side-by-side with `smctl gate web` — Vite proxies `/api/*` to `127.0.0.1:9378` on port `5173`.
 
 The default bind is `127.0.0.1`. Non-loopback binds emit a warning because there is no authentication layer yet.
+
+## Per-repo specs
+
+`smctl spec` aggregates across every registered `[[repos]]` entry — each repo carries its own `openspec/` tree, and aggregating commands walk every repo at once.
+
+```bash
+smctl spec list                  # every spec across every repo, grouped by repo
+smctl spec validate foo-v1       # bare name resolves when unambiguous
+smctl spec validate RepoA:foo-v1 # qualified name picks one when bare is ambiguous
+smctl spec validate foo-v1 --repo RepoA   # equivalent to RepoA:foo-v1
+smctl spec new foo-v1 --repo RepoA        # scaffold into RepoA's openspec/
+```
+
+Resolution rules for single-spec verbs (`validate`, `apply`, `archive`, `status`, `ff`):
+
+1. `--repo X` plus a bare name `Y` is sugar for the qualified `X:Y`.
+2. A qualified `X:Y` looks up directly in repo `X`.
+3. A bare name found in exactly one repo resolves unambiguously.
+4. A bare name found in multiple repos errors with a remediation that lists every match.
+5. A bare name in no repo errors with `smctl spec list` as the next step.
+
+`spec new` resolves the target via `--repo` first, then the `[[repos]]` entry that declared `smctl_home = true`, then the only registered repo when one exists. Single-repo workspaces with a workspace-level `openspec/` (the legacy layout this very repo currently uses) are auto-discovered as a synthetic `_workspace` repo so nothing changes for callers without `[[repos]]` entries.
 
 ## Verification
 

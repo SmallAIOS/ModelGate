@@ -164,9 +164,17 @@ pub struct FlowReleaseFinishParams {
 /// Input schema for spec-by-name tools.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpecByNameParams {
-    /// Spec identifier, matching the directory under
-    /// `openspec/changes/`.
+    /// Spec identifier. Bare `name` works when unambiguous across
+    /// registered repos; the qualified `repo:name` form picks one
+    /// explicitly. `--repo` (the optional `repo` parameter) is
+    /// equivalent sugar for prefixing.
     pub name: String,
+
+    /// Optional repo selector. When set, the tool resolves the spec
+    /// in that repo (equivalent to passing `repo:name`). Required for
+    /// disambiguation when multiple repos declare the same name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 /// Input schema for the `smctl_spec_list` tool.
@@ -235,6 +243,58 @@ impl SmctlServer {
                 None,
             )
         })
+    }
+
+    /// Build the per-repo `(name, openspec_dir)` slice the
+    /// smctl-spec aggregating API expects. Mirrors the CLI's
+    /// `Commands::Spec` prelude: every `[[repos]]` entry first,
+    /// then a synthetic `_workspace` entry when the workspace root
+    /// has its own openspec/, then a final fallback for fresh
+    /// workspaces.
+    fn spec_repos(&self, manifest: &smctl_workspace::WorkspaceManifest) -> Vec<(String, PathBuf)> {
+        let mut repos: Vec<(String, PathBuf)> = manifest
+            .repos
+            .iter()
+            .map(|r| {
+                let path = r
+                    .path
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.workspace_root.join(&r.name));
+                (r.name.clone(), path.join(&manifest.spec.openspec_dir))
+            })
+            .collect();
+        smctl_spec::inject_synthetic_workspace_repo(
+            &self.workspace_root,
+            &manifest.spec.openspec_dir,
+            &mut repos,
+        );
+        if repos.is_empty() {
+            repos.push((
+                "_workspace".to_string(),
+                self.workspace_root.join(&manifest.spec.openspec_dir),
+            ));
+        }
+        repos
+    }
+
+    /// Resolve a spec name against the per-repo slice, sugaring an
+    /// optional `repo` field as the `repo:name` qualifier prefix.
+    /// Errors surface as voice-conformant `ErrorData::invalid_params`
+    /// so MCP clients see the three-part remediation in the JSON
+    /// envelope.
+    fn resolve_spec_ref(
+        &self,
+        repos: &[(String, PathBuf)],
+        name: &str,
+        repo: Option<&str>,
+    ) -> Result<smctl_spec::RepoSpecRef, ErrorData> {
+        let lookup = match repo {
+            Some(r) if !name.contains(':') => format!("{r}:{name}"),
+            _ => name.to_string(),
+        };
+        smctl_spec::find_spec_in_repos(repos, &lookup)
+            .map_err(|e| ErrorData::invalid_params(format!("{e}"), None))
     }
 
     /// Serialize a value to pretty JSON, wrapping failures in a
@@ -1236,10 +1296,50 @@ impl SmctlServer {
         Parameters(params): Parameters<SpecByNameParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let manifest = self.load_manifest()?;
-        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
-        let name = params.name.clone();
+        let repos = self.spec_repos(&manifest);
 
-        let info = tokio::task::spawn_blocking(move || smctl_spec::new_spec(&openspec_dir, &name))
+        // Pick the target repo. When `repo` is set, find that entry's
+        // openspec_dir. Otherwise default to the smctl_home repo
+        // when one is declared, else the single registered repo,
+        // else error with a remediation listing the candidates.
+        let target_dir = if let Some(want) = params.repo.as_deref() {
+            repos
+                .iter()
+                .find(|(r, _)| r == want)
+                .map(|(_, p)| p.clone())
+                .ok_or_else(|| {
+                    let known: Vec<&str> = repos.iter().map(|(r, _)| r.as_str()).collect();
+                    ErrorData::invalid_params(
+                        format!(
+                            "Repo '{want}' is not registered in this workspace. \
+                             Known repos: {known:?}. \
+                             Pass `repo` with one of those, or `smctl workspace add` the repo first."
+                        ),
+                        None,
+                    )
+                })?
+        } else if let Some(home) = manifest.repos.iter().find(|r| r.smctl_home) {
+            repos
+                .iter()
+                .find(|(r, _)| r == &home.name)
+                .map(|(_, p)| p.clone())
+                .unwrap_or_else(|| self.workspace_root.join(&manifest.spec.openspec_dir))
+        } else if repos.len() == 1 {
+            repos[0].1.clone()
+        } else {
+            let known: Vec<&str> = repos.iter().map(|(r, _)| r.as_str()).collect();
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "No target repo for `smctl_spec_new`. \
+                     The workspace has multiple registered repos and no `[[repos]]` entry declares `smctl_home = true`. \
+                     Pass `repo` with one of: {known:?}."
+                ),
+                None,
+            ));
+        };
+
+        let name = params.name.clone();
+        let info = tokio::task::spawn_blocking(move || smctl_spec::new_spec(&target_dir, &name))
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
@@ -1276,8 +1376,12 @@ impl SmctlServer {
         Parameters(params): Parameters<SpecByNameParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let manifest = self.load_manifest()?;
-        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
-        let name = params.name.clone();
+        let repos = self.spec_repos(&manifest);
+        let r = self.resolve_spec_ref(&repos, &params.name, params.repo.as_deref())?;
+
+        let openspec_dir = r.openspec_dir.clone();
+        let name = r.name.clone();
+        let qualified = r.qualified();
 
         let result =
             tokio::task::spawn_blocking(move || smctl_spec::validate(&openspec_dir, &name))
@@ -1286,8 +1390,7 @@ impl SmctlServer {
                     ErrorData::internal_error(
                         format!(
                             "Spec validate task failed to join. {e}. \
-                         Retry the tool call, or run `smctl spec validate {}` to reproduce.",
-                            params.name
+                         Retry the tool call, or run `smctl spec validate {qualified}` to reproduce."
                         ),
                         None,
                     )
@@ -1302,8 +1405,16 @@ impl SmctlServer {
                     )
                 })?;
 
+        // Wrap the ValidationResult with the resolved repo so the
+        // tool envelope tells the caller which repo was validated.
+        let payload = serde_json::json!({
+            "repo": r.repo,
+            "name": r.name,
+            "qualified": qualified,
+            "result": result,
+        });
         Ok(CallToolResult::success(vec![Content::text(
-            Self::to_json_text(&serde_json::to_value(&result).unwrap_or_default())?,
+            Self::to_json_text(&payload)?,
         )]))
     }
 
@@ -1317,34 +1428,39 @@ impl SmctlServer {
         Parameters(params): Parameters<SpecByNameParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let manifest = self.load_manifest()?;
-        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
-        let name = params.name.clone();
+        let repos = self.spec_repos(&manifest);
+        let r = self.resolve_spec_ref(&repos, &params.name, params.repo.as_deref())?;
 
-        let dest = tokio::task::spawn_blocking(move || smctl_spec::archive(&openspec_dir, &name))
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    format!(
-                        "Spec archive task failed to join. {e}. \
-                         Retry the tool call, or run `smctl spec archive {}` to reproduce.",
-                        params.name
-                    ),
-                    None,
-                )
-            })?
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    format!(
-                        "Spec archive failed. {e}. \
-                         Run `smctl spec validate {}` to confirm the spec exists and is complete, then retry.",
-                        params.name
-                    ),
-                    None,
-                )
-            })?;
+        let openspec_dir = r.openspec_dir.clone();
+        let name = r.name.clone();
+        let qualified = r.qualified();
+
+        let dest =
+            tokio::task::spawn_blocking(move || smctl_spec::archive_in_repo(&openspec_dir, &name))
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Spec archive task failed to join. {e}. \
+                             Retry the tool call, or run `smctl spec archive {qualified}` to reproduce."
+                        ),
+                        None,
+                    )
+                })?
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        format!(
+                            "Spec archive failed. {e}. \
+                             Run `smctl spec validate {qualified}` to confirm the spec exists and is complete, then retry."
+                        ),
+                        None,
+                    )
+                })?;
 
         let payload = serde_json::json!({
-            "name": params.name,
+            "repo": r.repo,
+            "name": r.name,
+            "qualified": qualified,
             "archive_path": dest.display().to_string(),
         });
         Ok(CallToolResult::success(vec![Content::text(
@@ -1362,9 +1478,9 @@ impl SmctlServer {
         Parameters(_): Parameters<SpecListParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let manifest = self.load_manifest()?;
-        let openspec_dir = self.workspace_root.join(&manifest.spec.openspec_dir);
+        let repos = self.spec_repos(&manifest);
 
-        let specs = tokio::task::spawn_blocking(move || smctl_spec::list_specs(&openspec_dir))
+        let specs = tokio::task::spawn_blocking(move || smctl_spec::list_specs_across(&repos))
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
@@ -1379,10 +1495,7 @@ impl SmctlServer {
                 ErrorData::internal_error(
                     format!(
                         "Spec list failed. {e}. \
-                         Check that {} exists and is readable, then retry.",
-                        self.workspace_root
-                            .join(&manifest.spec.openspec_dir)
-                            .display()
+                         Check that the registered repos and their openspec/ trees are readable, then retry."
                     ),
                     None,
                 )

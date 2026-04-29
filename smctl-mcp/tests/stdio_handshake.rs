@@ -130,8 +130,8 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     );
 
     // Spec family: list on a manifest with no openspec dir returns an
-    // empty specs array (the library returns Ok(vec![]) when the
-    // directory is absent).
+    // empty specs array (the aggregating library returns
+    // Ok(vec![]) when no registered repo declares a spec).
     let specs = client
         .call_tool(CallToolRequestParams::new("smctl_spec_list"))
         .await?;
@@ -150,6 +150,109 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
         specs_json.get("specs").is_some(),
         "expected specs field in {specs_text}"
     );
+    assert!(
+        specs_json["specs"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "fresh fixture should have zero specs, got {specs_text}"
+    );
+
+    // Aggregating sanity: scaffold a real spec via smctl_spec_new
+    // (no `repo` set — defaults to the synthetic `_workspace` repo),
+    // then re-list and assert the new entry carries the `repo` field.
+    let new_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_new").with_arguments(
+                serde_json::json!({ "name": "mcp-aggregate-fixture" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await?;
+    assert!(
+        !new_resp.is_error.unwrap_or(false),
+        "smctl_spec_new reported an error payload: {new_resp:?}"
+    );
+    let listed = client
+        .call_tool(CallToolRequestParams::new("smctl_spec_list"))
+        .await?;
+    let listed_text = listed
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_spec_list (post-new) should carry text content");
+    let listed_json: serde_json::Value = serde_json::from_str(listed_text)?;
+    let entries = listed_json["specs"].as_array().expect("specs is an array");
+    let aggregated = entries
+        .iter()
+        .find(|e| e.get("name").and_then(|v| v.as_str()) == Some("mcp-aggregate-fixture"))
+        .expect("the new spec should appear in the aggregated list");
+    assert_eq!(
+        aggregated.get("repo").and_then(|v| v.as_str()),
+        Some("_workspace"),
+        "aggregated entry should carry the synthetic _workspace repo: {aggregated}"
+    );
+
+    // Validate via the qualified `repo:name` form. The response
+    // wraps the ValidationResult with a top-level `qualified`
+    // string for traceability.
+    let validate_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_validate").with_arguments(
+                serde_json::json!({ "name": "_workspace:mcp-aggregate-fixture" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await?;
+    assert!(
+        !validate_resp.is_error.unwrap_or(false),
+        "smctl_spec_validate reported an error payload: {validate_resp:?}"
+    );
+    let validate_text = validate_resp
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_spec_validate should carry text content");
+    let validate_json: serde_json::Value = serde_json::from_str(validate_text)?;
+    assert_eq!(
+        validate_json.get("qualified").and_then(|v| v.as_str()),
+        Some("_workspace:mcp-aggregate-fixture"),
+        "validate envelope should carry the qualified name: {validate_text}"
+    );
+
+    // Bare-name not-found returns an error envelope whose message
+    // includes the three-part remediation pointing at smctl spec list.
+    let missing_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_validate").with_arguments(
+                serde_json::json!({ "name": "definitely-not-a-spec" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await;
+    match missing_resp {
+        Ok(result) => {
+            assert!(
+                result.is_error.unwrap_or(false),
+                "smctl_spec_validate on a missing name should error, got {result:?}"
+            );
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(
+                msg.contains("smctl spec list"),
+                "missing-spec error should suggest `smctl spec list`: {msg}"
+            );
+        }
+    }
 
     // Build family: with an empty workspace, build reports an empty
     // results array and all_passed=true.
