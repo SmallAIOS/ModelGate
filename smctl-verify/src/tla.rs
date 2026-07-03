@@ -48,31 +48,51 @@ impl Launcher {
     /// Human-readable command prefix for reproduce hints.
     fn display(&self) -> String {
         match self {
-            Launcher::Direct(bin) => bin.clone(),
-            Launcher::Jar { jar } => format!("java -jar {}", jar.display()),
+            Launcher::Direct(bin) => sh_quote(bin),
+            Launcher::Jar { jar } => {
+                format!("java -jar {}", sh_quote(&jar.display().to_string()))
+            }
         }
     }
 }
 
-fn spawns_ok(binary: &str, args: &[&str]) -> bool {
-    Command::new(binary).args(args).output().is_ok()
+/// Single-quote a path for a copy-pasteable reproduce hint when it
+/// contains whitespace.
+fn sh_quote(s: &str) -> String {
+    if s.chars().any(char::is_whitespace) {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    } else {
+        s.to_string()
+    }
 }
 
-fn banner_first_line(binary: &str, args: &[&str]) -> String {
-    Command::new(binary)
-        .args(args)
-        .output()
-        .map(|out| {
-            let mut combined = out.stdout;
-            combined.extend_from_slice(&out.stderr);
-            String::from_utf8_lossy(&combined)
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        })
-        .unwrap_or_default()
+/// Single spawn probe: `Some(first banner line)` when the binary
+/// spawns, `None` when it doesn't. One process launch covers both
+/// the existence check and the version string.
+fn probe(binary: &str, args: &[&str]) -> Option<String> {
+    Command::new(binary).args(args).output().ok().map(|out| {
+        let mut combined = out.stdout;
+        combined.extend_from_slice(&out.stderr);
+        String::from_utf8_lossy(&combined)
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    })
+}
+
+/// Anchor a relative path to the current working directory. TLC runs
+/// with `current_dir` = the spec's directory, and on Unix a relative
+/// program or jar path would otherwise resolve against that child
+/// cwd — not the cwd the operator typed it in (see
+/// `Command::current_dir` platform-specific behavior).
+fn absolutize(p: PathBuf) -> PathBuf {
+    if p.is_absolute() {
+        return p;
+    }
+    let anchored = std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p);
+    anchored.canonicalize().unwrap_or(anchored)
 }
 
 /// Resolve a TLC launcher. Chain: env override → PATH `tlc` →
@@ -87,15 +107,21 @@ fn resolve_launcher(
     if let Ok(bin) = std::env::var(ENV_TLC_BIN)
         && !bin.trim().is_empty()
     {
-        if spawns_ok(&bin, &["-h"]) {
-            let version = banner_first_line(&bin, &["-h"]);
+        // A bare name resolves via PATH regardless of the child cwd;
+        // anything with a separator must be anchored before TLC runs
+        // with current_dir = the spec's directory.
+        let bin = if bin.contains(std::path::MAIN_SEPARATOR) || bin.contains('/') {
+            absolutize(PathBuf::from(&bin)).display().to_string()
+        } else {
+            bin
+        };
+        if let Some(version) = probe(&bin, &["-h"]) {
             return Some((Launcher::Direct(bin), version));
         }
         return None;
     }
 
-    if spawns_ok("tlc", &["-h"]) {
-        let version = banner_first_line("tlc", &["-h"]);
+    if let Some(version) = probe("tlc", &["-h"]) {
         return Some((Launcher::Direct("tlc".into()), version));
     }
 
@@ -104,7 +130,10 @@ fn resolve_launcher(
         if p.is_absolute() {
             p
         } else {
-            workspace_root.map(|r| r.join(&p)).unwrap_or(p)
+            // Anchor to the (already absolutized) workspace root.
+            workspace_root
+                .map(|r| absolutize(r.to_path_buf()).join(&p))
+                .unwrap_or(p)
         }
     });
     let env_jar = std::env::var(ENV_TLA2TOOLS_JAR)
@@ -113,7 +142,8 @@ fn resolve_launcher(
         .map(PathBuf::from);
 
     for jar in [configured_jar, env_jar].into_iter().flatten() {
-        if jar.is_file() && spawns_ok("java", &["-version"]) {
+        let jar = absolutize(jar);
+        if jar.is_file() && probe("java", &["-version"]).is_some() {
             let version = format!("tla2tools at {}", jar.display());
             return Some((Launcher::Jar { jar }, version));
         }
@@ -153,8 +183,11 @@ impl Verifier for TlaVerifier {
     }
 
     fn run(&self, ctx: &VerifyContext) -> VerifyReport {
+        // A relative workspace root (e.g. `-w .`) must be anchored
+        // before it can anchor the configured jar path.
+        let workspace_root = absolutize(ctx.workspace_root.clone());
         let Some((launcher, _version)) =
-            resolve_launcher(Some(&ctx.workspace_root), Some(&ctx.manifest))
+            resolve_launcher(Some(&workspace_root), Some(&ctx.manifest))
         else {
             let mut missing = VerifyReport::empty("model", Outcome::ToolMissing);
             missing.diagnostics.push(INSTALL_HINT.to_string());
@@ -193,7 +226,12 @@ fn run_model_source(
     source: &Path,
 ) -> (SourceRow, Option<String>) {
     let source_display = source.display().to_string();
-    let parent = source.parent().unwrap_or_else(|| Path::new("."));
+    // `Path::parent()` yields `Some("")` for a bare relative filename;
+    // an empty current_dir fails to spawn.
+    let parent = source
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let file_name = source
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
@@ -232,14 +270,24 @@ fn run_model_source(
     }
     args.push(file_name.clone());
 
+    // Reproduce hint omits -metadir: the per-run tempdir is gone by
+    // the time an operator copies the command, and TLC defaults to a
+    // local states/ dir when unset.
+    let reproduce_args: Vec<&str> = args
+        .iter()
+        .map(|a| a.as_str())
+        .enumerate()
+        .filter(|(i, a)| {
+            let prev_is_metadir = *i > 0 && args[i - 1] == "-metadir";
+            *a != "-metadir" && !prev_is_metadir
+        })
+        .map(|(_, a)| a)
+        .collect();
     let reproduce = format!(
         "cd {} && {} {}",
-        parent.display(),
+        sh_quote(&parent.display().to_string()),
         launcher.display(),
-        args.iter()
-            .map(|a| a.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+        reproduce_args.join(" ")
     );
 
     let mut cmd = launcher.command();
@@ -312,47 +360,65 @@ fn run_model_source(
         }
         TlcVerdict::CompletedOk | TlcVerdict::Unknown => {
             // Non-zero exit with no (or contradictory) text evidence:
-            // the exit code is ground truth. Classify what we can,
-            // warn that parsing degraded.
-            if let Some(kind) = tlc::violation_kind_from_exit(out.status.code()) {
-                let violation = Violation {
-                    kind,
-                    property: None,
-                    trace_states: analysis.trace.len(),
-                };
-                (
-                    violation_row(source_display, violation, analysis.stats, &reproduce),
-                    None,
-                )
+            // the exit code is ground truth, parsing has degraded.
+            // Per the capability spec this path emits SMCTL-0506 at
+            // Warning and quotes the raw output head. SMCTL-0505 is
+            // reserved for text-evidenced violations. The exit-code
+            // classification (10-13 per tla2tools util.ExitStatus) is
+            // still recorded in the structured detail.
+            tracing::warn!(
+                msgid = %smctl_log::MsgId::VerifyOutputUnparsed,
+                source = %source_display,
+                exit = out.status.code().unwrap_or(-1),
+                "tlc output did not match any known pattern",
+            );
+            let head = output_head(&out.stdout, &out.stderr);
+            let head_part = if head.is_empty() {
+                String::new()
             } else {
-                tracing::warn!(
-                    msgid = %smctl_log::MsgId::VerifyOutputUnparsed,
-                    source = %source_display,
-                    exit = out.status.code().unwrap_or(-1),
-                    "tlc output did not match any known pattern",
-                );
-                let head = output_head(&out.stdout, &out.stderr);
-                (
-                    SourceRow::plain(
-                        source_display.clone(),
-                        Outcome::Failed,
-                        format!(
-                            "TLC exited with {} on {source_display} but its output matched no known pattern{}. The failure is real (non-zero exit) but smctl could not classify it. Re-run `{reproduce}` to inspect the full output.",
-                            out.status
-                                .code()
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "<signal>".into()),
-                            if head.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" (output: {head})")
-                            },
-                        ),
+                format!(" (output: {head})")
+            };
+            let exit_str = out
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "<signal>".into());
+            let (classified, detail) = match tlc::violation_kind_from_exit(out.status.code()) {
+                Some(kind) => {
+                    let mut d = analysis.stats.unwrap_or_default();
+                    d.violation = Some(Violation {
+                        kind,
+                        property: None,
+                        trace_states: analysis.trace.len(),
+                    });
+                    (
+                        format!(" Exit code {exit_str} means {}.", exit_kind_phrase(kind)),
+                        Some(d),
+                    )
+                }
+                None => (String::new(), analysis.stats),
+            };
+            (
+                SourceRow {
+                    source: source_display.clone(),
+                    outcome: Outcome::Failed,
+                    note: format!(
+                        "TLC exited with {exit_str} on {source_display} but its output matched no known pattern{head_part}.{classified} Re-run `{reproduce}` to inspect the full output.",
                     ),
-                    None,
-                )
-            }
+                    detail,
+                },
+                None,
+            )
         }
+    }
+}
+
+fn exit_kind_phrase(kind: crate::ViolationKind) -> &'static str {
+    match kind {
+        crate::ViolationKind::Invariant => "a safety invariant is violated",
+        crate::ViolationKind::Deadlock => "the model deadlocks",
+        crate::ViolationKind::Liveness => "a temporal property is violated",
+        crate::ViolationKind::Assumption => "an ASSUME clause is false",
     }
 }
 

@@ -40,3 +40,12 @@
 - [x] 7.1 `openspec validate --all --strict` passes
 - [x] 7.2 `cargo fmt`, `cargo clippy --workspace -- -D warnings` pass; `cargo test --workspace` passes except the pre-existing `test_quality_audit_json_output_is_structurally_valid` failure whose fix ships in PR #30 (security-hygiene-v1) — green after that merges and this branch syncs with develop
 - [ ] 7.3 Open PR from `change/tla-plus-runner-v1` into `develop`; CI Gate green
+
+## 8. Adversarial review fixes (post-PR round)
+
+- [x] 8.1 Anchor relative launcher and jar paths before TLC runs with `current_dir` = spec dir: env-override binaries containing a separator, `TLA2TOOLS_JAR`, `[verify.model] jar`, and a relative workspace root are all absolutized (confirmed medium)
+- [x] 8.2 Unparsed non-zero exits now emit `SMCTL-0506` and quote the output head even when exit codes 10-13 classify the violation kind; `SMCTL-0505` is reserved for text-evidenced violations (confirmed medium — delta scenario now actually met)
+- [x] 8.3 Trace excerpt footer no longer claims truncation when the full trace rendered (confirmed low)
+- [x] 8.4 Jar fallback covered end-to-end by a hermetic test (fake `java` on a controlled PATH + placeholder jar) (confirmed low)
+- [x] 8.5 Parser keeps single-variable state lines (`x = 0`) and wrapped values in trace blocks; TLC marker lines terminate unblanked blocks
+- [x] 8.6 Bare-filename sources no longer produce an empty `current_dir`; reproduce hints drop the ephemeral `-metadir` and quote paths containing spaces; discovery probes spawn once instead of twice

@@ -1760,3 +1760,69 @@ fn test_verify_model_passes_config_workers_and_metadir_args() {
     assert!(run_line.contains("-config Lock.cfg"), "args: {run_line}");
     assert!(run_line.ends_with("Lock.tla"), "args: {run_line}");
 }
+
+#[test]
+fn test_verify_model_relative_bin_override_is_anchored_to_smctl_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("R.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    write_fake_tlc(dir.path(), "fake-tlc-rel", FAKE_PASS_TRANSCRIPT);
+
+    // A relative override is only meaningful against smctl's own cwd.
+    // TLC runs with current_dir = the spec's directory, so without
+    // anchoring, the child exec would fail to find ./fake-tlc-rel.
+    smctl()
+        .current_dir(dir.path())
+        .env("SMCTL_VERIFY_TLC_BIN", "./fake-tlc-rel")
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"));
+}
+
+#[test]
+fn test_verify_model_jar_fallback_runs_via_java() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("J.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+
+    // Fake `java` on a controlled PATH records its args and replays a
+    // passing transcript; the jar is a placeholder file. PATH keeps
+    // /bin and /usr/bin (for sh) but cannot reach any real tlc.
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let args_file = dir.path().join("java-args.txt");
+    write_fake_tlc(
+        &bin_dir,
+        "java",
+        &format!(
+            "echo \"$@\" >> {}\n{}",
+            args_file.display(),
+            FAKE_PASS_TRANSCRIPT
+        ),
+    );
+    let jar = dir.path().join("tla2tools.jar");
+    std::fs::write(&jar, "placeholder").unwrap();
+
+    smctl()
+        .env("PATH", format!("{}:/bin:/usr/bin", bin_dir.display()))
+        .env_remove("SMCTL_VERIFY_TLC_BIN")
+        .env("TLA2TOOLS_JAR", &jar)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"));
+
+    let captured = std::fs::read_to_string(&args_file).unwrap();
+    let run_line = captured.lines().last().unwrap();
+    assert!(run_line.contains("-jar"), "args: {run_line}");
+    assert!(run_line.ends_with("J.tla"), "args: {run_line}");
+}

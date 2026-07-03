@@ -67,8 +67,11 @@ pub fn analyze(output: &str) -> TlcAnalysis {
     for line in output.lines() {
         let trimmed = line.trim();
 
-        // Trace blocks: "State N: <...>" header, variable lines
-        // follow until a blank line or the next non-indented marker.
+        // Trace blocks: "State N: <...>" header, then variable lines
+        // until a blank line, the next header, or a known TLC marker.
+        // Non-conjunction lines stay in the block — single-variable
+        // states print bare `x = 0` and long values wrap without a
+        // leading /\.
         if is_state_header(trimmed) {
             if let Some(block) = current_state.take() {
                 trace.push(block);
@@ -79,13 +82,13 @@ pub fn analyze(output: &str) -> TlcAnalysis {
         if let Some(block) = current_state.as_mut() {
             if trimmed.is_empty() {
                 trace.push(current_state.take().unwrap());
-            } else if trimmed.starts_with("/\\") || trimmed.starts_with("\\/") {
+            } else if is_tlc_marker(trimmed) {
+                trace.push(current_state.take().unwrap());
+                // fall through: the marker line matches something below
+            } else {
                 block.push('\n');
                 block.push_str(trimmed);
                 continue;
-            } else {
-                trace.push(current_state.take().unwrap());
-                // fall through: the current line may match something below
             }
         }
 
@@ -181,11 +184,15 @@ pub fn analyze(output: &str) -> TlcAnalysis {
 /// three-part line pointing at the exact reproduce command.
 pub fn render_trace_excerpt(trace: &[String], reproduce: &str) -> String {
     let mut out = String::from("Counter-example trace:\n");
-    if trace.len() <= TRACE_HEAD + TRACE_TAIL {
+    let truncated = trace.len() > TRACE_HEAD + TRACE_TAIL;
+    if !truncated {
         for state in trace {
             out.push_str(state);
             out.push('\n');
         }
+        out.push_str(&format!(
+            "The trace above is the full counter-example, showing how the model reaches the violating state. Re-run `{reproduce}` to reproduce it."
+        ));
     } else {
         for state in &trace[..TRACE_HEAD] {
             out.push_str(state);
@@ -199,11 +206,23 @@ pub fn render_trace_excerpt(trace: &[String], reproduce: &str) -> String {
             out.push_str(state);
             out.push('\n');
         }
+        out.push_str(&format!(
+            "The trace above is truncated. It shows how the model reaches the violating state. Re-run `{reproduce}` for the full counter-example."
+        ));
     }
-    out.push_str(&format!(
-        "The trace above is truncated. It shows how the model reaches the violating state. Re-run `{reproduce}` for the full counter-example."
-    ));
     out
+}
+
+/// Lines that terminate a trace-state block even without a blank
+/// separator: TLC's own progress, verdict, and summary markers.
+fn is_tlc_marker(line: &str) -> bool {
+    line.starts_with("Error:")
+        || line.starts_with("Warning:")
+        || line.starts_with("Progress(")
+        || line.starts_with("Model checking completed")
+        || line.starts_with("Finished in ")
+        || line.starts_with("The depth of")
+        || (line.contains("states generated") && line.contains("distinct states found"))
 }
 
 fn is_state_header(line: &str) -> bool {
@@ -360,6 +379,34 @@ Fatal errors while parsing TLA+ spec in file Broken
     }
 
     #[test]
+    fn single_variable_states_keep_their_value_lines() {
+        let t = "Error: Invariant Inv is violated.\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 9, col 9 to line 9, col 30 of module M>\nx = 1\n\n3 states generated, 2 distinct states found, 0 states left on queue.\n";
+        let a = analyze(t);
+        assert_eq!(a.trace.len(), 2);
+        assert!(a.trace[0].contains("x = 0"), "trace[0]: {}", a.trace[0]);
+        assert!(a.trace[1].contains("x = 1"), "trace[1]: {}", a.trace[1]);
+        assert!(a.stats.is_some(), "stats still parsed");
+    }
+
+    #[test]
+    fn wrapped_value_lines_stay_in_their_state_block() {
+        let t = "Error: Invariant Inv is violated.\nState 1: <Initial predicate>\n/\\ queue = << [type |-> \"req\",\n   id |-> 42] >>\n/\\ x = 0\n\n1 states generated, 1 distinct states found, 0 states left on queue.\n";
+        let a = analyze(t);
+        assert_eq!(a.trace.len(), 1);
+        assert!(a.trace[0].contains("id |-> 42"), "trace: {}", a.trace[0]);
+        assert!(a.trace[0].contains("x = 0"));
+    }
+
+    #[test]
+    fn stats_line_terminates_unblanked_state_block() {
+        let t = "Error: Deadlock reached.\nState 1: <Initial predicate>\nx = 0\n7 states generated, 5 distinct states found, 0 states left on queue.\n";
+        let a = analyze(t);
+        assert_eq!(a.trace.len(), 1);
+        assert!(a.trace[0].contains("x = 0"));
+        assert_eq!(a.stats.expect("stats").states_generated, 7);
+    }
+
+    #[test]
     fn garbage_yields_unknown() {
         let a = analyze("something completely unrelated\nnope\n");
         assert_eq!(a.verdict, TlcVerdict::Unknown);
@@ -407,6 +454,11 @@ Fatal errors while parsing TLA+ spec in file Broken
         assert!(excerpt.contains("State 1: a"));
         assert!(excerpt.contains("State 2: b"));
         assert!(!excerpt.contains("elided"));
+        assert!(
+            !excerpt.contains("truncated"),
+            "full trace must not claim truncation"
+        );
+        assert!(excerpt.contains("full counter-example"));
         assert!(excerpt.contains("tlc Lock.tla"));
     }
 

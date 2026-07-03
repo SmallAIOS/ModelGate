@@ -48,6 +48,8 @@
 - [Capturing output changes UX for Lean/SPIN (operators previously saw raw tool spew)] → Their failure notes already embed a re-run command; captured stderr's first lines are appended to the failure note so signal is not lost. Net improvement: piped JSON stops being corrupted.
 - [`-workers auto` nondeterminism in fixtures] → Fixture scripts ignore arguments; parser tests use static transcripts.
 
+**Accepted limitations (recorded during review).** (1) `verify discover` cannot see `[verify.model] jar` — the `Verifier::discover` trait method takes no context — so a host configured solely via the workspace jar shows `model` as not installed in the discover listing even though `verify model` runs; the run path is authoritative. (2) The `tool_missing` JSON envelope is a CLI contract; smctl-mcp continues to return the bare `VerifyReport`, matching its existing behavior for all outcomes. (3) In human mode, Lean/SPIN success output is no longer streamed (captured instead); their failure notes carry the captured head, and deep rendering arrives in their own follow-up changes. (4) An invariant violated by the initial state yields `trace_states: 0` with no excerpt — TLC prints that state without a `State N:` header; acceptable until a real-world case motivates parsing it.
+
 ## Migration Plan
 
 Single PR from `change/tla-plus-runner-v1` into `develop`. Additive JSON fields only; `VerifyReport` envelope unchanged. Rollback is a revert.
