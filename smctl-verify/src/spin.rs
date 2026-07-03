@@ -245,6 +245,17 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
     let analysis = pan::analyze(&text);
 
     match analysis.verdict {
+        PanVerdict::Incomplete => (
+            SourceRow {
+                source: source_display.clone(),
+                outcome: Outcome::Failed,
+                note: format!(
+                    "pan reported no errors for {source_display} but did not complete the search (max search depth too small). The verification is inconclusive — unexplored states may violate properties. Re-run `{reproduce}` with a larger depth (add `-m<N>` to the pan invocation) to finish the search.",
+                ),
+                detail: analysis.stats.map(VerifyDetail::Protocol),
+            },
+            None,
+        ),
         PanVerdict::Passed => {
             let note = analysis
                 .stats
@@ -268,14 +279,20 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
         }
         PanVerdict::Violation(mut violation) => {
             // Replay the trail for a bounded counter-example excerpt.
-            let replay = sh_quote(spin_bin);
+            // Pan writes `<basename>.trail` into the workdir, but the
+            // spec path is absolute, so spin -t would look for the
+            // trail next to the source: -k names the workdir trail
+            // explicitly (verified against SPIN 6.5.2).
+            let trail = find_trail(wd);
             let replay_cmd = format!(
-                "{replay} -t -p {}",
+                "{} -t -k {} -p {}",
+                sh_quote(spin_bin),
+                sh_quote(trail.as_deref().unwrap_or("<spec>.trail")),
                 sh_quote(&abs_source.display().to_string())
             );
-            let excerpt = if trail_exists(wd) {
+            let excerpt = if let Some(trail_name) = &trail {
                 let steps = Command::new(spin_bin)
-                    .args(["-t", "-p"])
+                    .args(["-t", "-k", trail_name, "-p"])
                     .arg(&abs_source)
                     .current_dir(wd)
                     .output()
@@ -362,14 +379,14 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
     }
 }
 
-fn trail_exists(workdir: &Path) -> bool {
-    std::fs::read_dir(workdir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .any(|e| e.path().extension().is_some_and(|x| x == "trail"))
-        })
-        .unwrap_or(false)
+/// The trail file pan wrote into the work directory, when one exists.
+/// Pan names it `<spec basename>.trail` and writes it to its cwd.
+fn find_trail(workdir: &Path) -> Option<String> {
+    std::fs::read_dir(workdir).ok()?.flatten().find_map(|e| {
+        let path = e.path();
+        (path.extension().is_some_and(|x| x == "trail"))
+            .then(|| e.file_name().to_string_lossy().to_string())
+    })
 }
 
 fn violation_row(

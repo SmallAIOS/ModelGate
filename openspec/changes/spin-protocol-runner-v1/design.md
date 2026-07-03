@@ -42,6 +42,8 @@
 - [`pan -a` explores more than a pure-safety run needs] → correctness over speed for v1; a `[verify.protocol]` tuning follow-up can add `safety = true` if runtime hurts.
 - [Trail replay doubles spawns on failure] → only on failure, bounded output, and it is exactly the counter-example the operator needs.
 
+**Review round (empirical).** The adversarial review ran with real SPIN 6.5.2 available and confirmed three defects the fixtures had masked: (1) trail replay used `spin -t -p <abs spec>`, which looks for the trail beside the source file, while pan writes `<basename>.trail` into its cwd — fixed with `-k <trailfile>`, verified against the real tool; (2) `errors: 0` plus an incomplete-search warning was reported as `passed` — now a distinct inconclusive failure with a `-m<N>` remediation; (3) the failure-class matchers hit pan's own search-for banner ("invalid end states +" prints on every run) — matching is now restricted to pan-prefixed lines. Lesson recorded: fixture fidelity is bounded by what the author believes the tool does; when the real tool is installable, one live counter-example run belongs in the verification checklist.
+
 ## Migration Plan
 
 Single PR from `change/spin-protocol-runner-v1` into `develop`. JSON is additive (untagged detail preserves model shape). Rollback is a revert.

@@ -18,6 +18,9 @@ const TRAIL_TAIL: usize = 2;
 pub enum PanVerdict {
     /// `errors: 0` — the protocol verified.
     Passed,
+    /// `errors: 0` but pan reported an incomplete search (depth
+    /// truncation) — the verification is inconclusive.
+    Incomplete,
     /// Non-zero error count with a recognized failure class.
     Violation(ProtocolViolation),
     /// Non-zero error count but no recognized class — still failed
@@ -43,6 +46,7 @@ pub fn analyze(output: &str) -> PanAnalysis {
     let mut depth_reached: Option<u64> = None;
     let mut kind: Option<ProtocolViolationKind> = None;
     let mut violation_detail: Option<String> = None;
+    let mut search_incomplete = false;
 
     for line in output.lines() {
         let trimmed = line.trim();
@@ -60,6 +64,13 @@ pub fn analyze(output: &str) -> PanAnalysis {
             continue;
         }
 
+        if trimmed.contains("Search not completed")
+            || trimmed.contains("max search depth too small")
+        {
+            search_incomplete = true;
+            continue;
+        }
+
         // "  123456 states, stored" / "   7890 states, matched"
         if trimmed.ends_with("states, stored")
             && let Some(n) = first_number(trimmed)
@@ -74,7 +85,11 @@ pub fn analyze(output: &str) -> PanAnalysis {
             continue;
         }
 
-        if kind.is_none() {
+        // Failure classes only ever appear on pan-prefixed lines
+        // ("pan:1: assertion violated ...", "pan: acceptance cycle ...").
+        // The search-for banner lists "invalid end states +" on every
+        // run, so a bare substring match would misclassify.
+        if kind.is_none() && trimmed.starts_with("pan") {
             // "pan:1: assertion violated (x<=MAX) (at depth 42)"
             if let Some(idx) = trimmed.find("assertion violated") {
                 kind = Some(ProtocolViolationKind::Assertion);
@@ -101,6 +116,10 @@ pub fn analyze(output: &str) -> PanAnalysis {
     };
 
     let verdict = match (errors, kind) {
+        // errors: 0 only counts as verified when pan actually
+        // completed the search — a depth-truncated run is
+        // inconclusive, not a pass.
+        (Some(0), _) if search_incomplete => PanVerdict::Incomplete,
         (Some(0), _) => PanVerdict::Passed,
         (Some(_), Some(k)) => PanVerdict::Violation(ProtocolViolation {
             kind: k,
@@ -284,6 +303,30 @@ spin: trail ends after 3 steps
     fn unclassified_nonzero_errors_still_fail() {
         let a = analyze("State-vector 20 byte, depth reached 5, errors: 3\n");
         assert_eq!(a.verdict, PanVerdict::FailedUnclassified { errors: 3 });
+    }
+
+    #[test]
+    fn banner_lines_do_not_classify_failures() {
+        // Every pan run prints the search-for banner, which contains
+        // "invalid end states +". An unclassified real failure must
+        // stay unclassified rather than reading as a deadlock.
+        let t = "Full statespace search for:\n\tassertion violations\t+\n\tinvalid end states\t+\n\nState-vector 20 byte, depth reached 5, errors: 2\n";
+        let a = analyze(t);
+        assert_eq!(a.verdict, PanVerdict::FailedUnclassified { errors: 2 });
+    }
+
+    #[test]
+    fn incomplete_search_is_not_a_pass() {
+        let t = "Warning: Search not completed\nState-vector 20 byte, depth reached 9999, errors: 0\n  500 states, stored\n";
+        let a = analyze(t);
+        assert_eq!(a.verdict, PanVerdict::Incomplete);
+        assert_eq!(a.stats.expect("stats").states_stored, 500);
+    }
+
+    #[test]
+    fn max_depth_warning_is_incomplete() {
+        let t = "error: max search depth too small\nState-vector 20 byte, depth reached 10000, errors: 0\n";
+        assert_eq!(analyze(t).verdict, PanVerdict::Incomplete);
     }
 
     #[test]

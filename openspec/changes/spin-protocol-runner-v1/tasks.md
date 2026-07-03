@@ -29,3 +29,10 @@
 - [x] 5.1 `openspec validate --all --strict` passes
 - [x] 5.2 `cargo fmt`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace` all pass
 - [ ] 5.3 Open PR from `change/spin-protocol-runner-v1` into `develop`; CI Gate green; adversarial review pass on the diff
+
+## 6. Adversarial review fixes (empirically verified against SPIN 6.5.2)
+
+- [x] 6.1 Trail replay fixed: pan writes `<basename>.trail` into the workdir while the spec path is absolute, so `spin -t -p <abs>` reported "cannot find trail file" — replay now passes `-k <trailfile>` (verified against real spin; the fixture had masked this)
+- [x] 6.2 Depth-truncated searches (`Search not completed` / `max search depth too small`) with `errors: 0` now report failed-as-inconclusive with a `-m<N>` remediation instead of a false `passed`
+- [x] 6.3 Failure-class matchers restricted to pan-prefixed lines — the search-for banner's "invalid end states +" no longer misclassifies unrecognized failures as deadlocks
+- [x] 6.4 End-to-end validated with real spin + clang: assertion counter-examples caught with replayed trails, clean model passes with parsed stats
