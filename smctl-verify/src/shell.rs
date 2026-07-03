@@ -167,6 +167,30 @@ pub fn run_against_sources(shell: &Shell<'_>, ctx: &VerifyContext) -> VerifyRepo
     walk_sources(shell.name, ctx, &|path| run_one_source(shell, path))
 }
 
+/// Anchor a relative path to the current working directory. Runners
+/// spawn tools with `current_dir` set elsewhere, and on Unix a
+/// relative program path would otherwise resolve against that child
+/// cwd — not the cwd the operator typed it in.
+pub fn absolutize(p: std::path::PathBuf) -> std::path::PathBuf {
+    if p.is_absolute() {
+        return p;
+    }
+    let anchored = std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p);
+    anchored.canonicalize().unwrap_or(anchored)
+}
+
+/// Anchor an env-override binary path when it contains a separator;
+/// bare names resolve via PATH regardless of the child cwd.
+pub fn anchor_override(bin: String) -> String {
+    if bin.contains(std::path::MAIN_SEPARATOR) || bin.contains('/') {
+        absolutize(std::path::PathBuf::from(&bin))
+            .display()
+            .to_string()
+    } else {
+        bin
+    }
+}
+
 /// Single-quote a path for a copy-pasteable reproduce hint when it
 /// contains whitespace.
 pub fn sh_quote(s: &str) -> String {

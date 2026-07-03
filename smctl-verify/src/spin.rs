@@ -13,7 +13,9 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::pan::{self, PanVerdict};
-use crate::shell::{Shell, discover_binary, output_head, resolve_binary, sh_quote};
+use crate::shell::{
+    Shell, anchor_override, discover_binary, output_head, resolve_binary, sh_quote,
+};
 use crate::{
     DiscoveryResult, Outcome, ProtocolViolation, ProtocolViolationKind, SourceRow, Verifier,
     VerifyContext, VerifyDetail, VerifyReport,
@@ -36,10 +38,12 @@ const SHELL: Shell<'static> = Shell {
 };
 
 fn resolve_cc() -> String {
-    std::env::var(ENV_PAN_CC)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "cc".to_string())
+    anchor_override(
+        std::env::var(ENV_PAN_CC)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "cc".to_string()),
+    )
 }
 
 fn cc_available() -> bool {
@@ -65,6 +69,12 @@ impl Verifier for SpinVerifier {
     }
 
     fn run(&self, ctx: &VerifyContext) -> VerifyReport {
+        // An unconfigured workspace reports `no sources configured`
+        // without probing tools — probing first would flip cc-less
+        // hosts from a benign no_sources to tool_missing.
+        if ctx.manifest.sources.is_empty() {
+            return VerifyReport::empty(SHELL.name, Outcome::NoSources);
+        }
         if !discover_binary(&SHELL).is_installed() {
             let mut missing = VerifyReport::empty(SHELL.name, Outcome::ToolMissing);
             missing.diagnostics.push(format!(
@@ -79,7 +89,7 @@ impl Verifier for SpinVerifier {
             return missing;
         }
 
-        let spin_bin = resolve_binary(&SHELL);
+        let spin_bin = anchor_override(resolve_binary(&SHELL));
         let cc_bin = resolve_cc();
         let excerpts: RefCell<Vec<String>> = RefCell::new(Vec::new());
 
@@ -284,8 +294,10 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
             // trail next to the source: -k names the workdir trail
             // explicitly (verified against SPIN 6.5.2).
             let trail = find_trail(wd);
+            // A runnable reproduce needs the whole chain — the trail
+            // only exists after pan runs in a fresh work directory.
             let replay_cmd = format!(
-                "{} -t -k {} -p {}",
+                "{reproduce} && {} -t -k {} -p {}",
                 sh_quote(spin_bin),
                 sh_quote(trail.as_deref().unwrap_or("<spec>.trail")),
                 sh_quote(&abs_source.display().to_string())
@@ -333,21 +345,10 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
                 None,
             )
         }
-        PanVerdict::Unknown if pan_out.status.success() => {
-            // No errors: line but a clean exit — treat as passed with
-            // whatever stats surfaced; nothing to warn about beyond
-            // the missing summary.
-            (
-                SourceRow {
-                    source: source_display,
-                    outcome: Outcome::Passed,
-                    note: String::new(),
-                    detail: analysis.stats.map(VerifyDetail::Protocol),
-                },
-                None,
-            )
-        }
         PanVerdict::Unknown => {
+            // Pan normally exits 0 even on violations, so a clean exit
+            // without an `errors:` summary is not evidence of a pass —
+            // treat any unparseable output as a failure.
             tracing::warn!(
                 msgid = %smctl_log::MsgId::VerifyOutputUnparsed,
                 source = %source_display,
@@ -360,7 +361,7 @@ fn run_protocol_source(spin_bin: &str, cc_bin: &str, source: &Path) -> (SourceRo
                     source_display.clone(),
                     Outcome::Failed,
                     format!(
-                        "pan exited with {} on {source_display} but its output matched no known pattern{}. The failure is real (non-zero exit) but smctl could not classify it. Re-run `{reproduce}` to inspect the full output.",
+                        "pan exited with {} on {source_display} but its output matched no known pattern{}. Without pan's errors summary smctl cannot confirm the verification ran. Re-run `{reproduce}` to inspect the full output.",
                         pan_out
                             .status
                             .code()
@@ -421,7 +422,7 @@ fn violation_row(
         String::new()
     };
     let note = format!(
-        "{what}{trail_part}. Pan found a counter-example. Re-run `{reproduce}` for the full trail."
+        "{what}{trail_part}. The pan verifier found a counter-example. Re-run `{reproduce}` for the full trail."
     );
     let mut detail = stats.unwrap_or_default();
     detail.violation = Some(violation);

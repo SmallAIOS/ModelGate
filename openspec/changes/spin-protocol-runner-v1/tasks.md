@@ -36,3 +36,11 @@
 - [x] 6.2 Depth-truncated searches (`Search not completed` / `max search depth too small`) with `errors: 0` now report failed-as-inconclusive with a `-m<N>` remediation instead of a false `passed`
 - [x] 6.3 Failure-class matchers restricted to pan-prefixed lines — the search-for banner's "invalid end states +" no longer misclassifies unrecognized failures as deadlocks
 - [x] 6.4 End-to-end validated with real spin + clang: assertion counter-examples caught with replayed trails, clean model passes with parsed stats
+
+## 7. Adversarial review fixes, wave 2
+
+- [x] 7.1 `states, stored (N visited)` acceptance-run suffix parses (containment, not suffix match); pan's `%g` scientific-notation counts on large runs parse correctly
+- [x] 7.2 Trail-step extraction stops at `spin: trail ends` — the final state dump no longer inflates `trail_steps` (real-spin E2E: count corrected from 3 to 2)
+- [x] 7.3 Relative `SMCTL_VERIFY_SPIN_BIN` / `SMCTL_VERIFY_PAN_CC` overrides anchored via shared `shell::anchor_override` (same class the TLA review confirmed); `cc_available` now requires exit success, catching the macOS no-CLT `/usr/bin/cc` shim
+- [x] 7.4 `no sources configured` short-circuits before tool probes in both protocol and model verbs — cc-less hosts with unconfigured workspaces stay benign
+- [x] 7.5 Unparseable pan output is never a pass (pan exits 0 even on violations); trail-excerpt reproduce is the full runnable chain; violation note reworded to satisfy the lowercase-tool-name voice rule

@@ -71,14 +71,15 @@ pub fn analyze(output: &str) -> PanAnalysis {
             continue;
         }
 
-        // "  123456 states, stored" / "   7890 states, matched"
-        if trimmed.ends_with("states, stored")
+        // "  123456 states, stored" — acceptance runs append
+        // "(M visited)", so match by containment, not suffix.
+        if trimmed.contains("states, stored")
             && let Some(n) = first_number(trimmed)
         {
             states_stored = Some(n);
             continue;
         }
-        if trimmed.ends_with("states, matched")
+        if trimmed.contains("states, matched")
             && let Some(n) = first_number(trimmed)
         {
             states_matched = Some(n);
@@ -147,6 +148,9 @@ pub fn trail_steps(replay_output: &str) -> Vec<String> {
     replay_output
         .lines()
         .map(str::trim)
+        // The final state dump after the end marker repeats step-shaped
+        // lines; only lines before it are trail steps.
+        .take_while(|l| !l.starts_with("spin: trail ends"))
         .filter(|l| {
             let Some((num, rest)) = l.split_once(':') else {
                 return false;
@@ -193,15 +197,20 @@ pub fn render_trail_excerpt(steps: &[String], reproduce: &str) -> String {
     out
 }
 
-/// First unsigned integer in `s`, tolerating commas and leading text.
+/// First number in `s`, tolerating commas, leading text, and pan's
+/// %g-formatted counts on large runs (`1.2352941e+07 states, stored`).
 fn first_number(s: &str) -> Option<u64> {
     let cleaned = s.replace(',', "");
     let start = cleaned.find(|c: char| c.is_ascii_digit())?;
-    let digits: String = cleaned[start..]
+    let token: String = cleaned[start..]
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
         .collect();
-    digits.parse().ok()
+    let token = token.trim_end_matches(['.', 'e', 'E', '+', '-']);
+    if let Ok(n) = token.parse::<u64>() {
+        return Some(n);
+    }
+    token.parse::<f64>().ok().map(|f| f.round() as u64)
 }
 
 #[cfg(test)]
@@ -334,6 +343,33 @@ spin: trail ends after 3 steps
         let a = analyze("nothing pan-like here\n");
         assert_eq!(a.verdict, PanVerdict::Unknown);
         assert!(a.stats.is_none());
+    }
+
+    #[test]
+    fn acceptance_run_visited_suffix_still_parses_stored() {
+        let t = "State-vector 44 byte, depth reached 100, errors: 0\n  1234 states, stored (2468 visited)\n   99 states, matched\n";
+        let stats = analyze(t).stats.expect("stats");
+        assert_eq!(stats.states_stored, 1234);
+        assert_eq!(stats.states_matched, 99);
+    }
+
+    #[test]
+    fn scientific_notation_counts_parse() {
+        let t = "State-vector 64 byte, depth reached 9999, errors: 0\n1.2352941e+07 states, stored\n2.5e+06 states, matched\n";
+        let stats = analyze(t).stats.expect("stats");
+        assert_eq!(stats.states_stored, 12_352_941);
+        assert_eq!(stats.states_matched, 2_500_000);
+    }
+
+    #[test]
+    fn trail_steps_stop_at_end_marker() {
+        let t = "  1:\tproc  0 (init:1) m.pml:2 (state 1)\t[x = 1]\nspin: trail ends after 1 steps\n  2:\tproc  0 (init:1) m.pml:2 (state 2) <valid end state>\n";
+        let steps = trail_steps(t);
+        assert_eq!(
+            steps.len(),
+            1,
+            "state dump after the marker must not count: {steps:?}"
+        );
     }
 
     #[test]
