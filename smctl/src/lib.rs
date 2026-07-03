@@ -160,6 +160,22 @@ pub fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Find the nearest Cargo workspace root by walking up from `start` looking
+/// for `Cargo.lock`. Cargo-ecosystem tools (cargo-audit, cargo-machete, …)
+/// operate on the lockfile directory; invoking them from a workspace member
+/// directory fails without this.
+pub fn find_cargo_root(start: &Path) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join("Cargo.lock").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +204,14 @@ mod tests {
     fn test_find_workspace_root_none() {
         let dir = tempfile::tempdir().unwrap();
         assert!(find_workspace_root(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_find_cargo_root_walks_up_from_member_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.lock"), "").unwrap();
+        let member = dir.path().join("member").join("src");
+        std::fs::create_dir_all(&member).unwrap();
+        assert_eq!(find_cargo_root(&member).unwrap(), dir.path());
     }
 }

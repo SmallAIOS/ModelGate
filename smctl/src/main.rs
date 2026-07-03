@@ -1845,7 +1845,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_audit_available() {
@@ -1928,7 +1929,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_machete_available() {
@@ -2000,7 +2002,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_geiger_available() {
@@ -2076,7 +2079,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_modules_available() {
@@ -2158,7 +2162,8 @@ async fn run(cli: Cli) -> Result<i32> {
 
                 let root = path.clone().unwrap_or_else(|| {
                     resolve_root().unwrap_or_else(|_| {
-                        std::env::current_dir().expect("failed to get current directory")
+                        let cwd = std::env::current_dir().expect("failed to get current directory");
+                        smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                     })
                 });
 
