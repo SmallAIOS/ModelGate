@@ -5,6 +5,47 @@ All notable changes to ModelGate will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-03
+
+Formal verification and supply-chain security. Adds the `smctl verify` command tree with Cedar policy checking end-to-end and deep TLA+ model checking, per-repo OpenSpec aggregation, a RustSec advisory gate in CI, and a repo-wide security-hygiene pass that closed every open dependency advisory.
+
+### Added
+
+- **smctl-verify** — formal-verification surface under `smctl verify {policy,model,proof,protocol,discover}`. Cedar runs in-process via the `cedar-policy` SDK with per-file diagnostics; TLA+ (`tlc`), Lean 4 (`lake`), and SPIN (`spin`) ship as shell-out runners. Source roots declared in `[verify.<domain>]` workspace sections (`deny_unknown_fields`). MSGID range `SMCTL-0500..0599`.
+- **Deep TLC model checking** (`tla-plus-runner-v1`) — `smctl verify model` resolves TLC via PATH binary or `java -jar tla2tools.jar` (`[verify.model] jar` / `TLA2TOOLS_JAR`), honors sibling `.cfg` configs, runs `-workers auto` with `-metadir` in a temp dir, and parses state-space statistics, invariant/deadlock/liveness/assumption violations, and bounded counter-example traces into a structured `detail` object on each source row. New MSGIDs `SMCTL-0505 VerifyCounterExample`, `SMCTL-0506 VerifyOutputUnparsed`. Hermetic test harness via `SMCTL_VERIFY_TLC_BIN` fixture scripts.
+- **Per-repo OpenSpec aggregation** (`openspec-aggregate-v1`) — `smctl spec list/validate/apply/archive/status/ff` walk every registered repo's `openspec/` tree and aggregate; single-spec verbs accept `repo:name` qualification. Closes the 0.2.0 known limitation.
+- **Security Audit CI job** — `cargo audit` (RustSec advisory database) on every PR and push, wired into the CI Gate, with a documented `--ignore RUSTSEC-<id>` escape hatch. New `repo-security` capability spec records the baseline: Dependabot alerts + security updates, secret scanning, and push protection all enabled.
+- **Canonical OpenSpec format** — capability specs under `openspec/specs/<capability>/spec.md` with requirement/scenario structure; OpenSpec 1.5.0 CLI scaffolding (config, skills, opsx commands) committed. `openspec validate --all --strict` gates the tree.
+- **rust-toolchain.toml** — pins the workspace to the stable channel so machine-wide nightly defaults (kept for SmallAIOS kernel targets) never silently build ModelGate; matches CI's `dtolnay/rust-toolchain@stable`.
+
+### Changed
+
+- Shell-out verifiers capture child stdout/stderr instead of inheriting smctl's stdio — raw tool output can no longer corrupt the piped-JSON contract; failure notes fold in the captured output head.
+- Every verify subcommand emits the structured `tool_missing` envelope (`error`/`tool`/`install_hint`) in JSON mode, mirroring the `smctl quality` command family.
+- Frontend toolchain: `vitest` 2.1.9 → 3.2.6 (critical GHSA-5xrq-8626-4rwp), `vite` 5.4.21 → 6.4.3 (high GHSA-fx2h-pf6j-xcff), `happy-dom` 15.11.7 → 20.10.6 (critical GHSA-37j7-fg3j-429f), transitive `@babel/core` → 7.29.7. `npm audit` reports zero vulnerabilities.
+- Rust dependencies: `quinn-proto` → 0.11.15 (high RUSTSEC-2026-0185), `anyhow` → 1.0.103 (unsound RUSTSEC-2026-0190).
+- `AGENTS.md` is now generated from `CLAUDE.md` and addressed to AI coding agents generally.
+
+### Fixed
+
+- All five `smctl quality` verbs fell back to the bare current directory when no `.smctl/workspace.toml` exists, so their cargo-ecosystem tools failed from any workspace member directory. New `smctl::find_cargo_root` walks up to the nearest `Cargo.lock`.
+- `.gitignore` now covers `*.log` and `.claude/worktrees/`, keeping local tool logs and managed worktrees out of the public repo.
+
+### Known limitations
+
+- Lean 4 and SPIN runners remain exit-code wrappers; deep integration tracked as `lean-proof-runner-v1` and `spin-protocol-runner-v1`. Notably `spin -a` only generates the pan.c verifier — protocol "passed" means Promela parsed, not verified.
+- `smctl verify discover` cannot see `[verify.model] jar` (the discover trait takes no context), so jar-only hosts list the model verifier as not installed even though `verify model` runs.
+- `smctl quality` still requires the relevant cargo plugin on `PATH`; bundling tracked as `quality-tools-bundle-v1`.
+
+### Specs landed in this release
+
+| Spec | PR |
+|---|---|
+| formal-methods-v1 | [#23](https://github.com/SmallAIOS/ModelGate/pull/23) |
+| openspec-aggregate-v1 | [#25](https://github.com/SmallAIOS/ModelGate/pull/25) |
+| security-hygiene-v1 | [#30](https://github.com/SmallAIOS/ModelGate/pull/30) |
+| tla-plus-runner-v1 | [#31](https://github.com/SmallAIOS/ModelGate/pull/31) |
+
 ## [0.2.0] - 2026-04-25
 
 Major capability expansion. Adds the ModelGate control-plane (CLI + web dashboard), an MCP server, a Rust-native engineering-quality suite, an RFC 5424 logging stack, and a design-system-driven copy contract. End-to-end shakedown against the real SmallAIOS workspace surfaced and fixed one regression in `smctl build`.
