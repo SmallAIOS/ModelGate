@@ -435,6 +435,44 @@ mod tests {
     }
 
     #[test]
+    fn verify_detail_untagged_round_trips_both_variants() {
+        // Model rows: bare object, no tag or wrapper field.
+        let model = VerifyDetail::Model(ModelCheckDetail {
+            states_generated: 7,
+            distinct_states: 3,
+            queue_remaining: 0,
+            violation: None,
+        });
+        let s = serde_json::to_string(&model).unwrap();
+        assert!(s.starts_with('{') && !s.contains("Model"), "untagged: {s}");
+        assert!(matches!(
+            serde_json::from_str::<VerifyDetail>(&s).unwrap(),
+            VerifyDetail::Model(_)
+        ));
+
+        // Protocol rows: disjoint field names disambiguate.
+        let protocol = VerifyDetail::Protocol(ProtocolCheckDetail {
+            states_stored: 120,
+            states_matched: 14,
+            depth_reached: 42,
+            violation: Some(ProtocolViolation {
+                kind: ProtocolViolationKind::Assertion,
+                detail: Some("(nfull(ch))".into()),
+                trail_steps: 3,
+            }),
+        });
+        let s = serde_json::to_string(&protocol).unwrap();
+        assert!(s.contains("\"states_stored\":120"), "{s}");
+        assert!(s.contains("\"kind\":\"assertion\""), "{s}");
+        match serde_json::from_str::<VerifyDetail>(&s).unwrap() {
+            VerifyDetail::Protocol(p) => {
+                assert_eq!(p.violation.unwrap().trail_steps, 3)
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
     fn manifest_from_workspace_threads_model_jar_and_workers() {
         let section = smctl_workspace::VerifyManifestSection {
             model: Some(smctl_workspace::ModelVerifierSection {
