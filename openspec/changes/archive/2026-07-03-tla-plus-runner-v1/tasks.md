@@ -39,7 +39,7 @@
 
 - [x] 7.1 `openspec validate --all --strict` passes
 - [x] 7.2 `cargo fmt`, `cargo clippy --workspace -- -D warnings` pass; `cargo test --workspace` passes except the pre-existing `test_quality_audit_json_output_is_structurally_valid` failure whose fix ships in PR #30 (security-hygiene-v1) — green after that merges and this branch syncs with develop
-- [ ] 7.3 Open PR from `change/tla-plus-runner-v1` into `develop`; CI Gate green
+- [x] 7.3 Open PR from `change/tla-plus-runner-v1` into `develop`; CI Gate green — PR #31, all checks passed twice (initial + adversarial review fixes), squash-merged 2026-07-03
 
 ## 8. Adversarial review fixes (post-PR round)
 
