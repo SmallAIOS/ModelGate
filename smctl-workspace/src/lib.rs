@@ -254,6 +254,14 @@ pub struct ModelVerifierSection {
     pub specs: Vec<String>,
     #[serde(default = "default_verify_fail_on")]
     pub fail_on: String,
+    /// Path to `tla2tools.jar` for the `java -jar` fallback when no
+    /// `tlc` binary is on PATH. Relative paths resolve against the
+    /// workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jar: Option<String>,
+    /// TLC worker thread count. Omitted means `-workers auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -905,6 +913,56 @@ fail_on = "any"
 
         let protocol = v.protocol.expect("protocol");
         assert_eq!(protocol.specs, vec!["formal/spin/*.pml".to_string()]);
+    }
+
+    #[test]
+    fn test_verify_model_jar_and_workers_parse() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+jar = "tools/tla2tools.jar"
+workers = 4
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let model = manifest.verify.unwrap().model.unwrap();
+        assert_eq!(model.jar.as_deref(), Some("tools/tla2tools.jar"));
+        assert_eq!(model.workers, Some(4));
+    }
+
+    #[test]
+    fn test_verify_model_jar_and_workers_default_to_none() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let model = manifest.verify.unwrap().model.unwrap();
+        assert_eq!(model.jar, None);
+        assert_eq!(model.workers, None);
+    }
+
+    #[test]
+    fn test_verify_model_jar_typo_fails_at_parse_time() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+jars = ["oops.jar"]
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("jars"),
+            "error should cite the unknown field: {msg}"
+        );
     }
 
     #[test]

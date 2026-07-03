@@ -95,11 +95,11 @@ impl Verifier for CedarVerifier {
                             .diagnostics
                             .extend(row.note.lines().map(str::to_string));
                     }
-                    report.sources.push(SourceRow {
-                        source: path.display().to_string(),
-                        outcome: row.outcome,
-                        note: row.note,
-                    });
+                    report.sources.push(SourceRow::plain(
+                        path.display().to_string(),
+                        row.outcome,
+                        row.note,
+                    ));
                 }
             }
         }
@@ -197,6 +197,7 @@ mod tests {
             manifest: VerifyManifest {
                 sources,
                 fail_on: "any".into(),
+                ..VerifyManifest::default()
             },
             strict: false,
             verifier_filter: None,

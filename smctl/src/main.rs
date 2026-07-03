@@ -2421,7 +2421,34 @@ async fn run(cli: Cli) -> Result<i32> {
                         }
                     }
                     if want_json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
+                        if matches!(report.outcome, smctl_verify::Outcome::ToolMissing) {
+                            // The capability spec pins a structured
+                            // envelope for the missing-tool case:
+                            // top-level error/tool fields plus the
+                            // install hint, mirroring the smctl
+                            // quality command family.
+                            let (tool, install_hint) = match verifier.discover() {
+                                smctl_verify::DiscoveryResult::NotInstalled {
+                                    tool,
+                                    install_hint,
+                                } => (tool, install_hint),
+                                smctl_verify::DiscoveryResult::Found { path, .. } => (
+                                    path,
+                                    report.diagnostics.first().cloned().unwrap_or_default(),
+                                ),
+                            };
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "error": "tool_missing",
+                                    "verifier": report.verifier,
+                                    "tool": tool,
+                                    "install_hint": install_hint,
+                                }))?
+                            );
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&report)?);
+                        }
                     } else {
                         render_verify_report_human(&report);
                     }

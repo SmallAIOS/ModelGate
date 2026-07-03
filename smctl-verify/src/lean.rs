@@ -12,6 +12,7 @@ const SHELL: Shell<'static> = Shell {
     version_args: &["--version"],
     run_args: &["build"],
     install_hint: "install Lean 4 via elan: https://leanprover.github.io/lean4/doc/setup.html",
+    env_override: None,
 };
 
 #[derive(Debug, Default)]

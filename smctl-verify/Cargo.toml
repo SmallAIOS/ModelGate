@@ -22,6 +22,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+# TLC's -metadir scratch is pointed into a per-run temp directory so
+# model-checking metadata never lands in the operator's repo.
+tempfile.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

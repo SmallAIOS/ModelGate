@@ -20,6 +20,7 @@ pub mod registry;
 pub mod shell;
 pub mod spin;
 pub mod tla;
+pub mod tlc;
 
 pub use cedar::CedarVerifier;
 pub use lean::LeanVerifier;
@@ -91,6 +92,17 @@ pub struct VerifyManifest {
     /// `"error"` — fail only on errors. Default `"any"`.
     #[serde(default = "default_fail_on")]
     pub fail_on: String,
+
+    /// `[verify.model] jar` — path to `tla2tools.jar` for the
+    /// `java -jar` fallback. Relative paths resolve against the
+    /// workspace root. Only the model verb consults this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jar: Option<String>,
+
+    /// `[verify.model] workers` — TLC worker thread count.
+    /// `None` means `-workers auto`. Only the model verb consults this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<u32>,
 }
 
 fn default_fail_on() -> String {
@@ -122,6 +134,7 @@ pub fn manifest_from_workspace(
             .map(|p| VerifyManifest {
                 sources: p.sources.clone(),
                 fail_on: p.fail_on.clone(),
+                ..VerifyManifest::default()
             })
             .unwrap_or_default(),
         "model" => s
@@ -130,6 +143,8 @@ pub fn manifest_from_workspace(
             .map(|m| VerifyManifest {
                 sources: m.specs.clone(),
                 fail_on: m.fail_on.clone(),
+                jar: m.jar.clone(),
+                workers: m.workers,
             })
             .unwrap_or_default(),
         "proof" => s
@@ -138,6 +153,7 @@ pub fn manifest_from_workspace(
             .map(|p| VerifyManifest {
                 sources: p.roots.clone(),
                 fail_on: p.fail_on.clone(),
+                ..VerifyManifest::default()
             })
             .unwrap_or_default(),
         "protocol" => s
@@ -146,6 +162,7 @@ pub fn manifest_from_workspace(
             .map(|p| VerifyManifest {
                 sources: p.specs.clone(),
                 fail_on: p.fail_on.clone(),
+                ..VerifyManifest::default()
             })
             .unwrap_or_default(),
         _ => VerifyManifest::default(),
@@ -231,6 +248,65 @@ pub struct SourceRow {
     /// summary). Not rendered when empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// Structured model-check detail. Populated by the TLA+ runner;
+    /// other verifiers omit it, so existing JSON consumers see no
+    /// change. Flows through smctl-mcp automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<ModelCheckDetail>,
+}
+
+impl SourceRow {
+    /// Row without structured detail — the shape every verifier
+    /// except the TLA+ runner produces.
+    pub fn plain(source: String, outcome: Outcome, note: String) -> Self {
+        Self {
+            source,
+            outcome,
+            note,
+            detail: None,
+        }
+    }
+}
+
+/// Structured result of one TLC model-checking run, parsed from the
+/// tool's output. Attached to [`SourceRow::detail`] by the model verb.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelCheckDetail {
+    /// Total states TLC generated.
+    pub states_generated: u64,
+    /// Distinct states found.
+    pub distinct_states: u64,
+    /// States left on the queue when checking stopped.
+    pub queue_remaining: u64,
+    /// Present when TLC found a property violation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub violation: Option<Violation>,
+}
+
+/// A property violation TLC reported, with its counter-example size.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Violation {
+    /// Which class of property failed.
+    pub kind: ViolationKind,
+    /// Violated property name when TLC printed one (invariants do;
+    /// deadlocks don't).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub property: Option<String>,
+    /// Number of states in the counter-example trace.
+    pub trace_states: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViolationKind {
+    /// A safety invariant was violated.
+    Invariant,
+    /// The model deadlocked.
+    Deadlock,
+    /// A temporal (liveness) property was violated.
+    Liveness,
+    /// An ASSUME clause evaluated to false.
+    Assumption,
 }
 
 impl VerifyReport {
@@ -275,6 +351,53 @@ mod tests {
             install_hint: "install via the TLA+ Toolbox".into(),
         };
         assert!(!missing.is_installed());
+    }
+
+    #[test]
+    fn source_row_omits_detail_when_absent_and_includes_when_present() {
+        let plain = SourceRow::plain("a.tla".into(), Outcome::Passed, String::new());
+        let s = serde_json::to_string(&plain).unwrap();
+        assert!(!s.contains("detail"), "detail must be omitted: {s}");
+
+        let with_detail = SourceRow {
+            source: "b.tla".into(),
+            outcome: Outcome::Failed,
+            note: String::new(),
+            detail: Some(ModelCheckDetail {
+                states_generated: 10,
+                distinct_states: 5,
+                queue_remaining: 0,
+                violation: Some(Violation {
+                    kind: ViolationKind::Invariant,
+                    property: Some("TypeOK".into()),
+                    trace_states: 3,
+                }),
+            }),
+        };
+        let s = serde_json::to_string(&with_detail).unwrap();
+        assert!(s.contains("\"states_generated\":10"), "{s}");
+        assert!(s.contains("\"kind\":\"invariant\""), "{s}");
+        assert!(s.contains("\"property\":\"TypeOK\""), "{s}");
+    }
+
+    #[test]
+    fn manifest_from_workspace_threads_model_jar_and_workers() {
+        let section = smctl_workspace::VerifyManifestSection {
+            model: Some(smctl_workspace::ModelVerifierSection {
+                specs: vec!["formal/tla/*.tla".into()],
+                fail_on: "any".into(),
+                jar: Some("tools/tla2tools.jar".into()),
+                workers: Some(8),
+            }),
+            ..Default::default()
+        };
+        let m = manifest_from_workspace(Some(&section), "model");
+        assert_eq!(m.jar.as_deref(), Some("tools/tla2tools.jar"));
+        assert_eq!(m.workers, Some(8));
+        // Other verbs never carry jar/workers.
+        let p = manifest_from_workspace(Some(&section), "policy");
+        assert_eq!(p.jar, None);
+        assert_eq!(p.workers, None);
     }
 
     #[test]
