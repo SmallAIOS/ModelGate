@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ModelGate is the developer tooling and model gateway hub for the SmallAIOS ecosystem. Its primary deliverable is **`smctl`** (SmallAIOS Control), a unified CLI tool for managing the SmallAIOS multi-repo workspace.
 
-**Current state:** Alpha (v0.1.0) — initial `smctl` CLI with workspace, git flow, OpenSpec, and build orchestration. 5 crates, 21 tests.
+**Current state:** Alpha (v0.3.0) — `smctl` CLI with workspace, git flow, per-repo OpenSpec aggregation, build orchestration, the ModelGate control-plane (CLI + web dashboard), an MCP server, an engineering-quality suite, RFC 5424 logging, and formal verification (Cedar end-to-end, deep TLC model checking). 11 crates, 293 tests.
 
 ## What smctl Does
 
@@ -48,6 +48,8 @@ Changes follow the OpenSpec spec-driven development lifecycle:
 
 Specs live in `openspec/changes/<name>/` with: `.openspec.yaml`, `proposal.md`, `design.md`, `tasks.md`, `specs/`.
 
+**Per-repo aggregation.** Every registered `[[repos]]` entry carries its own `openspec/` tree. `smctl spec list/validate/apply/archive/status/ff` walk every repo and aggregate; single-spec verbs accept either a bare name (when unambiguous) or the qualified `repo:name` form. `--repo X` plus a bare name is equivalent to `X:name`. `spec new` resolves its target repo via `--repo` → `smctl_home` repo → the only registered repo. Single-repo workspaces with a workspace-level `openspec/` are auto-discovered as a synthetic `_workspace` repo.
+
 ## Conventions
 
 - `.local/` — AI-generated scratch, temp files, things not for git. Listed in .gitignore.
@@ -72,3 +74,7 @@ The production web dashboard lives in two places: the Rust server at [`modelgate
 ## Logging
 
 All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The canonical MSGID catalog and severity-mapping table live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that document is authoritative for any new MSGID allocation, facility choice, or transport change.
+
+## Formal verification
+
+`smctl verify` exposes Cedar (policy), TLA+ (model), Lean 4 (proof), and SPIN/Promela (protocol). Cedar runs end-to-end inside `smctl`; the other three are exit-code shell-out wrappers in v1, with deep parsing deferred to per-tool follow-up changes. Source roots are declared in `[verify.<domain>]` blocks in `workspace.toml`. Capability spec lives at `openspec/specs/smctl-verify/spec.md`; the design rationale (Cedar vs Alloy vs Rego analysis) is preserved in the archived `formal-methods-v1` change. MSGID range `SMCTL-0500..0599`.

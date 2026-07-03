@@ -1,0 +1,31 @@
+[package]
+name = "smctl-verify"
+description = "Formal-verification surface for smctl (Cedar policy, TLA+ model, Lean 4 proof, SPIN/Promela protocol, discover)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+smctl-log = { path = "../smctl-log" }
+smctl-workspace = { path = "../smctl-workspace" }
+
+# Cedar — Rust-native authorization policy. The Cedar SDK ships
+# evaluator + validator + symbolic-compiler with a Lean 4-verified
+# core (per design.md). We pin the major version; minor bumps are
+# safe per Cedar's semver policy.
+cedar-policy = "4"
+glob = "0.3"
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+# TLC's -metadir scratch is pointed into a per-run temp directory so
+# model-checking metadata never lands in the operator's repo.
+tempfile.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

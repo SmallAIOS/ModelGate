@@ -34,6 +34,11 @@ const EXPECTED_TOOLS: &[&str] = &[
     "smctl_spec_archive",
     "smctl_spec_list",
     "smctl_build",
+    "smctl_verify_policy",
+    "smctl_verify_model",
+    "smctl_verify_proof",
+    "smctl_verify_protocol",
+    "smctl_verify_discover",
 ];
 
 #[tokio::test]
@@ -125,8 +130,8 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
     );
 
     // Spec family: list on a manifest with no openspec dir returns an
-    // empty specs array (the library returns Ok(vec![]) when the
-    // directory is absent).
+    // empty specs array (the aggregating library returns
+    // Ok(vec![]) when no registered repo declares a spec).
     let specs = client
         .call_tool(CallToolRequestParams::new("smctl_spec_list"))
         .await?;
@@ -145,6 +150,109 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
         specs_json.get("specs").is_some(),
         "expected specs field in {specs_text}"
     );
+    assert!(
+        specs_json["specs"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "fresh fixture should have zero specs, got {specs_text}"
+    );
+
+    // Aggregating sanity: scaffold a real spec via smctl_spec_new
+    // (no `repo` set — defaults to the synthetic `_workspace` repo),
+    // then re-list and assert the new entry carries the `repo` field.
+    let new_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_new").with_arguments(
+                serde_json::json!({ "name": "mcp-aggregate-fixture" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await?;
+    assert!(
+        !new_resp.is_error.unwrap_or(false),
+        "smctl_spec_new reported an error payload: {new_resp:?}"
+    );
+    let listed = client
+        .call_tool(CallToolRequestParams::new("smctl_spec_list"))
+        .await?;
+    let listed_text = listed
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_spec_list (post-new) should carry text content");
+    let listed_json: serde_json::Value = serde_json::from_str(listed_text)?;
+    let entries = listed_json["specs"].as_array().expect("specs is an array");
+    let aggregated = entries
+        .iter()
+        .find(|e| e.get("name").and_then(|v| v.as_str()) == Some("mcp-aggregate-fixture"))
+        .expect("the new spec should appear in the aggregated list");
+    assert_eq!(
+        aggregated.get("repo").and_then(|v| v.as_str()),
+        Some("_workspace"),
+        "aggregated entry should carry the synthetic _workspace repo: {aggregated}"
+    );
+
+    // Validate via the qualified `repo:name` form. The response
+    // wraps the ValidationResult with a top-level `qualified`
+    // string for traceability.
+    let validate_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_validate").with_arguments(
+                serde_json::json!({ "name": "_workspace:mcp-aggregate-fixture" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await?;
+    assert!(
+        !validate_resp.is_error.unwrap_or(false),
+        "smctl_spec_validate reported an error payload: {validate_resp:?}"
+    );
+    let validate_text = validate_resp
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_spec_validate should carry text content");
+    let validate_json: serde_json::Value = serde_json::from_str(validate_text)?;
+    assert_eq!(
+        validate_json.get("qualified").and_then(|v| v.as_str()),
+        Some("_workspace:mcp-aggregate-fixture"),
+        "validate envelope should carry the qualified name: {validate_text}"
+    );
+
+    // Bare-name not-found returns an error envelope whose message
+    // includes the three-part remediation pointing at smctl spec list.
+    let missing_resp = client
+        .call_tool(
+            CallToolRequestParams::new("smctl_spec_validate").with_arguments(
+                serde_json::json!({ "name": "definitely-not-a-spec" })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
+        .await;
+    match missing_resp {
+        Ok(result) => {
+            assert!(
+                result.is_error.unwrap_or(false),
+                "smctl_spec_validate on a missing name should error, got {result:?}"
+            );
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(
+                msg.contains("smctl spec list"),
+                "missing-spec error should suggest `smctl spec list`: {msg}"
+            );
+        }
+    }
 
     // Build family: with an empty workspace, build reports an empty
     // results array and all_passed=true.
@@ -166,6 +274,102 @@ async fn initialize_and_call_workspace_status() -> anyhow::Result<()> {
         build_json.get("results").is_some(),
         "expected results field in {build_text}"
     );
+
+    // Verify family: discover lists every shipped verifier and
+    // reports kind=found for Cedar (Rust dep) regardless of host
+    // tooling. policy with no [verify.policy] sources returns an
+    // empty source list with outcome=no_sources.
+    let verify_discover = client
+        .call_tool(CallToolRequestParams::new("smctl_verify_discover"))
+        .await?;
+    assert!(
+        !verify_discover.is_error.unwrap_or(false),
+        "smctl_verify_discover reported an error payload: {verify_discover:?}"
+    );
+    let discover_text = verify_discover
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_verify_discover should carry text content");
+    let discover_json: serde_json::Value = serde_json::from_str(discover_text)?;
+    let entries = discover_json
+        .as_array()
+        .expect("discover returns a JSON array");
+    assert_eq!(
+        entries.len(),
+        4,
+        "expected 4 verifier entries (policy/model/proof/protocol) in {discover_text}"
+    );
+    let policy_entry = entries
+        .iter()
+        .find(|e| e.get("verifier").and_then(|v| v.as_str()) == Some("policy"))
+        .expect("policy entry");
+    assert_eq!(
+        policy_entry
+            .pointer("/discovery/kind")
+            .and_then(|v| v.as_str()),
+        Some("found"),
+        "Cedar should always be Found (Rust dep): {policy_entry}"
+    );
+
+    let verify_policy = client
+        .call_tool(CallToolRequestParams::new("smctl_verify_policy"))
+        .await?;
+    assert!(
+        !verify_policy.is_error.unwrap_or(false),
+        "smctl_verify_policy reported an error payload: {verify_policy:?}"
+    );
+    let policy_text = verify_policy
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .map(|t| t.text.as_str())
+        .expect("smctl_verify_policy should carry text content");
+    let policy_json: serde_json::Value = serde_json::from_str(policy_text)?;
+    assert_eq!(
+        policy_json.get("verifier").and_then(|v| v.as_str()),
+        Some("policy")
+    );
+    assert_eq!(
+        policy_json.get("outcome").and_then(|v| v.as_str()),
+        Some("no_sources"),
+        "no [verify.policy] in fixture manifest -> outcome=no_sources, got {policy_text}"
+    );
+
+    // Each remaining verb runs through its own #[tool] handler and
+    // through SmctlServer::run_verifier with a different verb name —
+    // exercise all three even though they short-circuit identically
+    // (no [verify.<verb>] section -> no_sources, OR tool_missing if
+    // the runner happens to have tlc/lake/spin installed).
+    for verb_tool in [
+        "smctl_verify_model",
+        "smctl_verify_proof",
+        "smctl_verify_protocol",
+    ] {
+        let resp = client
+            .call_tool(CallToolRequestParams::new(verb_tool))
+            .await?;
+        assert!(
+            !resp.is_error.unwrap_or(false),
+            "{verb_tool} reported an error payload: {resp:?}"
+        );
+        let body_text = resp
+            .content
+            .first()
+            .and_then(|c| c.raw.as_text())
+            .map(|t| t.text.as_str())
+            .unwrap_or_else(|| panic!("{verb_tool} should carry text content"));
+        let body: serde_json::Value = serde_json::from_str(body_text)?;
+        let outcome = body
+            .get("outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            ["no_sources", "tool_missing"].contains(&outcome),
+            "{verb_tool} outcome should be no_sources or tool_missing on a fresh fixture; got '{outcome}' in {body_text}"
+        );
+    }
 
     // Flow family: init with no repos completes and returns a
     // FlowResult with an empty repos array.

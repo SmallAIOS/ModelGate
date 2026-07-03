@@ -220,7 +220,12 @@ fn test_spec_new_validate_archive() {
         .arg(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("archived spec 'test-feature'"));
+        // Output now uses the qualified `repo:name` form. In a single-
+        // repo workspace with no [[repos]] entries the repo is the
+        // synthetic `_workspace` entry the dispatcher adds.
+        .stdout(predicate::str::contains(
+            "archived spec '_workspace:test-feature'",
+        ));
 
     // Original should be gone
     assert!(!dir.path().join("openspec/changes/test-feature").exists());
@@ -310,6 +315,308 @@ fn test_spec_list() {
         .success()
         .stdout(predicate::str::contains("spec-a"))
         .stdout(predicate::str::contains("spec-b"));
+}
+
+// ── Verify commands ──────────────────────────────────────────────────
+
+#[test]
+fn test_verify_help_lists_all_subcommands() {
+    smctl()
+        .args(["verify", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("policy"))
+        .stdout(predicate::str::contains("model"))
+        .stdout(predicate::str::contains("proof"))
+        .stdout(predicate::str::contains("protocol"))
+        .stdout(predicate::str::contains("discover"));
+}
+
+#[test]
+fn test_verify_discover_lists_four_verifiers() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // Discover should list all four verifiers regardless of host
+    // toolchain. policy is always Found (Cedar is a Rust dep); the
+    // shell-out trio may be either Found or NotInstalled depending
+    // on the runner — assert each row appears, not the per-row
+    // status.
+    smctl()
+        .args(["verify", "discover", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("policy"))
+        .stdout(predicate::str::contains("model"))
+        .stdout(predicate::str::contains("proof"))
+        .stdout(predicate::str::contains("protocol"));
+}
+
+#[test]
+fn test_verify_discover_json_output() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let output = smctl()
+        .args(["verify", "discover", "--json", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let body = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|e| panic!("discover --json should produce valid JSON: {e}\n{body}"));
+    let arr = parsed.as_array().expect("array");
+    assert_eq!(arr.len(), 4, "expected 4 entries: {body}");
+    let names: Vec<&str> = arr
+        .iter()
+        .filter_map(|e| e.get("verifier").and_then(|v| v.as_str()))
+        .collect();
+    assert!(names.contains(&"policy"));
+    assert!(names.contains(&"model"));
+    assert!(names.contains(&"proof"));
+    assert!(names.contains(&"protocol"));
+}
+
+#[test]
+fn test_verify_policy_no_sources_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // No [verify.policy] section in the fresh manifest -> Cedar
+    // verifier reports outcome=no_sources and exits 0. assert_cmd
+    // gives the child a non-TTY stdout, so the dispatcher's
+    // safety-quality-v1 Decision 9 fallback emits JSON; we assert
+    // against the JSON envelope rather than the human table.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"verifier\": \"policy\""))
+        .stdout(predicate::str::contains("\"outcome\": \"no_sources\""));
+}
+
+#[test]
+fn test_verify_policy_dry_run() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    // --dry-run should describe what would happen and exit with the
+    // DRY_RUN code (10), per safety-quality-v1's exit-code contract.
+    smctl()
+        .args(["--dry-run", "verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'policy'"));
+}
+
+#[test]
+fn test_verify_policy_with_well_formed_cedar_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("policies")).unwrap();
+    std::fs::write(
+        repo_dir.join("policies").join("allow.cedar"),
+        "permit(principal, action, resource);",
+    )
+    .unwrap();
+
+    // Hand-write the manifest so the TOML structure is unambiguous —
+    // [[repos]] entries and [verify.policy] both come from one
+    // serialise pass rather than init_workspace + an appended tail.
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.policy]
+sources = ["policies/*.cedar"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+
+    // Cedar runs against the policy file we wrote. Outcome=passed,
+    // 1 policy counted. assert_cmd captures stdout as non-TTY so
+    // dispatcher falls through to JSON output per safety-quality-v1
+    // Decision 9.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("allow.cedar"))
+        .stdout(predicate::str::contains("\"1 policy"));
+}
+
+#[test]
+fn test_verify_policy_with_malformed_cedar_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("policies")).unwrap();
+    // Missing closing paren — Cedar parser should reject this.
+    std::fs::write(
+        repo_dir.join("policies").join("broken.cedar"),
+        "permit(principal, action, resource;",
+    )
+    .unwrap();
+
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        format!(
+            r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.policy]
+sources = ["policies/*.cedar"]
+fail_on = "any"
+"#,
+            repo = repo_dir.display()
+        ),
+    )
+    .unwrap();
+
+    // Outcome::Failed -> exit_code::GENERAL_ERROR (2). The note
+    // carries the three-part remediation pointing back at
+    // `smctl verify policy`.
+    smctl()
+        .args(["verify", "policy", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("broken.cedar"))
+        .stdout(predicate::str::contains("smctl verify policy"));
+}
+
+#[test]
+fn test_verify_model_no_sources_emits_no_sources() {
+    // `tlc` is unlikely to be on the runner's PATH; the
+    // discover-fail short-circuit produces ToolMissing. But when
+    // there's also no [verify.model] config, we want to exercise
+    // the model dispatch arm regardless. Use --dry-run to avoid
+    // depending on whether `tlc` is reachable.
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    smctl()
+        .args(["--dry-run", "verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'model'"));
+}
+
+#[test]
+fn test_verify_proof_dry_run_uses_proof_subsection() {
+    let dir = tempfile::tempdir().unwrap();
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[verify.proof]
+roots = ["formal/lean", "kernel/proofs"]
+fail_on = "any"
+"#,
+    )
+    .unwrap();
+
+    // dry-run prints "N configured source pattern(s)" — assert that
+    // the proof verb's dispatch picks up the .roots field (length 2)
+    // rather than .sources or .specs from another subsection.
+    smctl()
+        .args(["--dry-run", "verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("would run verifier 'proof'"))
+        .stdout(predicate::str::contains("2 configured source pattern"));
+}
+
+#[test]
+fn test_verify_protocol_dry_run_uses_protocol_subsection() {
+    let dir = tempfile::tempdir().unwrap();
+    let smctl_dir = dir.path().join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    std::fs::write(
+        smctl_dir.join("workspace.toml"),
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[verify.protocol]
+specs = ["formal/spin/a.pml", "formal/spin/b.pml", "formal/spin/c.pml"]
+fail_on = "any"
+"#,
+    )
+    .unwrap();
+
+    smctl()
+        .args(["--dry-run", "verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .code(10)
+        .stdout(predicate::str::contains("3 configured source pattern"));
+}
+
+#[test]
+fn test_verify_strict_flag_propagates() {
+    // --strict is a verify-level global flag; help should expose it
+    // both at `smctl verify --help` and at each subverb's help.
+    smctl()
+        .args(["verify", "policy", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--strict"))
+        .stdout(predicate::str::contains("--verifier"));
 }
 
 // ── Spec duplicate error ─────────────────────────────────────────────
@@ -1039,4 +1346,483 @@ fn test_quality_complexity_json_shape() {
         );
         assert!(obj.contains_key("remediation"), "missing 'remediation' key");
     }
+}
+
+// ── Per-repo spec aggregation ──────────────────────────────────────
+
+/// Build a fixture: a workspace at `dir` registering two repos at
+/// `dir/{repo_a,repo_b}`, each pre-seeded with one openspec change.
+/// Returns the workspace root path.
+fn two_repo_spec_fixture(
+    dir: &Path,
+    a_spec: Option<&str>,
+    b_spec: Option<&str>,
+) -> std::path::PathBuf {
+    let repo_a = dir.join("repo_a");
+    let repo_b = dir.join("repo_b");
+    std::fs::create_dir_all(&repo_a).unwrap();
+    std::fs::create_dir_all(&repo_b).unwrap();
+    if let Some(name) = a_spec {
+        smctl_spec::new_spec(&repo_a.join("openspec"), name).unwrap();
+    }
+    if let Some(name) = b_spec {
+        smctl_spec::new_spec(&repo_b.join("openspec"), name).unwrap();
+    }
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let toml_text = format!(
+        r#"[workspace]
+name = "agg-ws"
+root = "."
+
+[[repos]]
+name = "RepoA"
+url = "file://{a}"
+path = "{a}"
+default_branch = "main"
+
+[[repos]]
+name = "RepoB"
+url = "file://{b}"
+path = "{b}"
+default_branch = "main"
+"#,
+        a = repo_a.display(),
+        b = repo_b.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), toml_text).unwrap();
+    dir.to_path_buf()
+}
+
+#[test]
+fn test_spec_list_aggregates_two_repos() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("alpha"), Some("beta"));
+
+    // Human output groups by repo with one heading per repo. The
+    // spec subcommand doesn't auto-fall-back to JSON on non-TTY, so
+    // assert_cmd captures the grouped human output verbatim.
+    smctl()
+        .args(["spec", "list", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA\n"))
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("RepoB\n"))
+        .stdout(predicate::str::contains("beta"));
+
+    // --json output is the flat array.
+    smctl()
+        .args(["spec", "list", "--json", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"repo\": \"RepoA\""))
+        .stdout(predicate::str::contains("\"repo\": \"RepoB\""));
+}
+
+#[test]
+fn test_spec_validate_bare_unambiguous() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("alpha"), Some("beta"));
+
+    // alpha lives only in RepoA; bare lookup must succeed.
+    smctl()
+        .args(["spec", "validate", "alpha", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:alpha"));
+}
+
+#[test]
+fn test_spec_validate_bare_ambiguous_lists_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    // Both repos declare "shared" — bare resolve must error and
+    // tell the operator how to disambiguate.
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    smctl()
+        .args(["spec", "validate", "shared", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous"))
+        .stderr(predicate::str::contains("RepoA"))
+        .stderr(predicate::str::contains("RepoB"));
+}
+
+#[test]
+fn test_spec_validate_qualified_form() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    // Qualified form picks one of two ambiguous matches.
+    smctl()
+        .args(["spec", "validate", "RepoB:shared", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoB:shared"));
+}
+
+#[test]
+fn test_spec_validate_with_repo_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    two_repo_spec_fixture(dir.path(), Some("shared"), Some("shared"));
+
+    // --repo X plus bare name == X:name.
+    smctl()
+        .args(["spec", "validate", "shared", "--repo", "RepoA", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:shared"));
+}
+
+#[test]
+fn test_spec_archive_lands_in_owning_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), Some("alpha"), None);
+
+    smctl()
+        .args(["spec", "archive", "RepoA:alpha", "-w"])
+        .arg(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RepoA:alpha"));
+
+    // Spec moved out of RepoA's active changes.
+    assert!(!dir.path().join("repo_a/openspec/changes/alpha").exists());
+    // And landed under RepoA's archive tree, not RepoB's.
+    let archive_a = dir.path().join("repo_a/openspec/changes/archive");
+    let archive_b = dir.path().join("repo_b/openspec/changes/archive");
+    let entries_a: Vec<_> = std::fs::read_dir(&archive_a).unwrap().collect();
+    assert_eq!(
+        entries_a.len(),
+        1,
+        "RepoA's archive should hold the moved spec"
+    );
+    assert!(
+        !archive_b.exists() || std::fs::read_dir(&archive_b).unwrap().next().is_none(),
+        "RepoB's archive should stay empty"
+    );
+}
+
+#[test]
+fn test_spec_new_with_repo_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), None, None);
+
+    smctl()
+        .args(["spec", "new", "fresh-spec", "--repo", "RepoB", "-w"])
+        .arg(&workspace)
+        .assert()
+        .success();
+
+    // New spec must land in RepoB's openspec/, not RepoA's.
+    assert!(
+        dir.path()
+            .join("repo_b/openspec/changes/fresh-spec/proposal.md")
+            .exists()
+    );
+    assert!(
+        !dir.path()
+            .join("repo_a/openspec/changes/fresh-spec")
+            .exists()
+    );
+}
+
+#[test]
+fn test_spec_new_unknown_repo_flag_errors_with_remediation() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = two_repo_spec_fixture(dir.path(), None, None);
+
+    smctl()
+        .args(["spec", "new", "fresh-spec", "--repo", "DoesNotExist", "-w"])
+        .arg(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("DoesNotExist"))
+        .stderr(predicate::str::contains("RepoA"))
+        .stderr(predicate::str::contains("RepoB"));
+}
+
+// --- verify model deep parsing (tla-plus-runner-v1) -----------------
+//
+// The full TLC pipeline runs against fixture scripts injected via
+// SMCTL_VERIFY_TLC_BIN, so no JVM or tla2tools.jar is needed on the
+// test host. Parser-level coverage lives in smctl-verify/src/tlc.rs.
+
+/// Write a `.smctl/workspace.toml` declaring one repo and a
+/// `[verify.model]` section globbing `specs/*.tla` inside it.
+fn write_model_workspace(dir: &Path, repo_dir: &Path) {
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.model]
+specs = ["specs/*.tla"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+}
+
+/// Write an executable fake-tlc shell script.
+fn write_fake_tlc(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+const FAKE_PASS_TRANSCRIPT: &str = r#"cat <<'TLCEOF'
+TLC2 Version 2.19 of 08 August 2024
+Model checking completed. No error has been found.
+2048 states generated, 512 distinct states found, 0 states left on queue.
+TLCEOF
+exit 0"#;
+
+const FAKE_INVARIANT_TRANSCRIPT: &str = r#"cat <<'TLCEOF'
+TLC2 Version 2.19 of 08 August 2024
+Error: Invariant MutualExclusion is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ owner = NoThread
+
+State 2: <Acquire line 22, col 3 to line 25, col 20 of module Lock>
+/\ owner = t1
+
+State 3: <Acquire line 22, col 3 to line 25, col 20 of module Lock>
+/\ owner = t2
+
+142 states generated, 37 distinct states found, 11 states left on queue.
+TLCEOF
+exit 12"#;
+
+#[test]
+fn test_verify_model_passes_with_parsed_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Sched.tla"),
+        "---- MODULE Sched ----\n====\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let tlc = write_fake_tlc(dir.path(), "fake-tlc-pass", FAKE_PASS_TRANSCRIPT);
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"))
+        .stdout(predicate::str::contains("\"distinct_states\": 512"))
+        .stdout(predicate::str::contains(
+            "2048 states generated, 512 distinct",
+        ));
+}
+
+#[test]
+fn test_verify_model_invariant_violation_reports_property_and_trace() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Lock.tla"),
+        "---- MODULE Lock ----\n====\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let tlc = write_fake_tlc(dir.path(), "fake-tlc-violation", FAKE_INVARIANT_TRANSCRIPT);
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("MutualExclusion"))
+        .stdout(predicate::str::contains("\"kind\": \"invariant\""))
+        .stdout(predicate::str::contains("\"trace_states\": 3"))
+        .stdout(predicate::str::contains("Counter-example trace:"))
+        .stdout(predicate::str::contains("owner = NoThread"));
+}
+
+#[test]
+fn test_verify_model_tool_missing_emits_spec_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("X.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+
+    // Point the override at a nonexistent binary and make sure the
+    // jar fallbacks can't fire either.
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", "/nonexistent/smctl-fake-tlc")
+        .env_remove("TLA2TOOLS_JAR")
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success() // tool_missing exits 0 without --strict
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\""))
+        .stdout(predicate::str::contains("\"tool\": \"tlc\""))
+        .stdout(predicate::str::contains("TLA2TOOLS_JAR"));
+}
+
+#[test]
+fn test_verify_model_piped_output_is_pure_json_despite_noisy_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("N.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    // A tool that spews unstructured noise on both streams and exits 0.
+    let tlc = write_fake_tlc(
+        dir.path(),
+        "fake-tlc-noisy",
+        "echo RAW-TLC-NOISE-ON-STDOUT\necho RAW-TLC-NOISE-ON-STDERR >&2\nexit 0",
+    );
+
+    let output = smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // The whole of stdout must parse as one JSON document — captured
+    // tool output must never interleave (spec: Captured tool output).
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not pure JSON: {e}\nstdout:\n{stdout}"));
+    assert_eq!(value["outcome"], "passed");
+    assert!(
+        !stdout.contains("RAW-TLC-NOISE-ON-STDOUT"),
+        "raw tool output leaked into smctl stdout"
+    );
+}
+
+#[test]
+fn test_verify_model_passes_config_workers_and_metadir_args() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("Lock.tla"), "").unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Lock.cfg"),
+        "INIT Init\nNEXT Next\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let args_file = dir.path().join("captured-args.txt");
+    let tlc = write_fake_tlc(
+        dir.path(),
+        "fake-tlc-args",
+        &format!(
+            "echo \"$@\" >> {}\n{}",
+            args_file.display(),
+            FAKE_PASS_TRANSCRIPT
+        ),
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let captured = std::fs::read_to_string(&args_file).unwrap();
+    // Last line is the real run (earlier lines are discovery probes).
+    let run_line = captured.lines().last().unwrap();
+    assert!(run_line.contains("-workers auto"), "args: {run_line}");
+    assert!(run_line.contains("-metadir"), "args: {run_line}");
+    assert!(run_line.contains("-config Lock.cfg"), "args: {run_line}");
+    assert!(run_line.ends_with("Lock.tla"), "args: {run_line}");
+}
+
+#[test]
+fn test_verify_model_relative_bin_override_is_anchored_to_smctl_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("R.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    write_fake_tlc(dir.path(), "fake-tlc-rel", FAKE_PASS_TRANSCRIPT);
+
+    // A relative override is only meaningful against smctl's own cwd.
+    // TLC runs with current_dir = the spec's directory, so without
+    // anchoring, the child exec would fail to find ./fake-tlc-rel.
+    smctl()
+        .current_dir(dir.path())
+        .env("SMCTL_VERIFY_TLC_BIN", "./fake-tlc-rel")
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"));
+}
+
+#[test]
+fn test_verify_model_jar_fallback_runs_via_java() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("J.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+
+    // Fake `java` on a controlled PATH records its args and replays a
+    // passing transcript; the jar is a placeholder file. PATH keeps
+    // /bin and /usr/bin (for sh) but cannot reach any real tlc.
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let args_file = dir.path().join("java-args.txt");
+    write_fake_tlc(
+        &bin_dir,
+        "java",
+        &format!(
+            "echo \"$@\" >> {}\n{}",
+            args_file.display(),
+            FAKE_PASS_TRANSCRIPT
+        ),
+    );
+    let jar = dir.path().join("tla2tools.jar");
+    std::fs::write(&jar, "placeholder").unwrap();
+
+    smctl()
+        .env("PATH", format!("{}:/bin:/usr/bin", bin_dir.display()))
+        .env_remove("SMCTL_VERIFY_TLC_BIN")
+        .env("TLA2TOOLS_JAR", &jar)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"));
+
+    let captured = std::fs::read_to_string(&args_file).unwrap();
+    let run_line = captured.lines().last().unwrap();
+    assert!(run_line.contains("-jar"), "args: {run_line}");
+    assert!(run_line.ends_with("J.tla"), "args: {run_line}");
 }

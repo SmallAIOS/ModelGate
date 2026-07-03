@@ -17,6 +17,7 @@ use crate::severity::Severity;
 /// - `SMCTL-0200` .. `SMCTL-0299` — smctl-mcp (see `smctl-mcp-v1/specs/mcp-server-impl.md`)
 /// - `SMCTL-0300` .. `SMCTL-0399` — modelgate-web (see `modelgate-web-v1/specs/web-server.md`)
 /// - `SMCTL-0400` .. `SMCTL-0499` — smctl-quality (see `safety-quality-v1/specs/quality-toolchain.md`)
+/// - `SMCTL-0500` .. `SMCTL-0599` — smctl-verify (see `formal-methods-v1/specs/smctl-verify/spec.md`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MsgId {
     // smctl core (0001..0099)
@@ -46,6 +47,14 @@ pub enum MsgId {
     WebServerStopped,
     WebUpstreamUnreachable,
     WebUpstreamTimeout,
+
+    // smctl-verify (0500..0599)
+    VerifyStarted,
+    VerifySucceeded,
+    VerifyFailed,
+    VerifierMissing,
+    VerifyCounterExample,
+    VerifyOutputUnparsed,
 
     // smctl-quality (0400..0499)
     QualityCheckStarted,
@@ -84,6 +93,12 @@ impl MsgId {
             MsgId::WebServerStopped => 302,
             MsgId::WebUpstreamUnreachable => 303,
             MsgId::WebUpstreamTimeout => 304,
+            MsgId::VerifyStarted => 501,
+            MsgId::VerifySucceeded => 502,
+            MsgId::VerifyFailed => 503,
+            MsgId::VerifierMissing => 504,
+            MsgId::VerifyCounterExample => 505,
+            MsgId::VerifyOutputUnparsed => 506,
             MsgId::QualityCheckStarted => 400,
             MsgId::QualityCheckCompleted => 401,
             MsgId::QualityCheckFailed => 402,
@@ -108,13 +123,17 @@ impl MsgId {
             | MsgId::McpResourceReadFailed
             | MsgId::QualityCheckFailed
             | MsgId::DsmCycleDetected
-            | MsgId::DependencyVulnerability => Severity::Error,
+            | MsgId::DependencyVulnerability
+            | MsgId::VerifyFailed
+            | MsgId::VerifyCounterExample => Severity::Error,
             MsgId::McpClientDisconnected
             | MsgId::ComplexityThresholdExceeded
             | MsgId::DependencyUnused
             | MsgId::FerroceneIncompatibility
             | MsgId::WebUpstreamUnreachable
-            | MsgId::WebUpstreamTimeout => Severity::Warning,
+            | MsgId::WebUpstreamTimeout
+            | MsgId::VerifierMissing
+            | MsgId::VerifyOutputUnparsed => Severity::Warning,
             MsgId::UnsafeBlockFound => Severity::Notice,
             _ => Severity::Informational,
         }
@@ -308,6 +327,59 @@ mod tests {
             assert!(
                 (300..=399).contains(&code),
                 "web MSGID {id:?} code {code} outside reserved 300..=399"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_codes_and_display_match_spec_catalog() {
+        assert_eq!(MsgId::VerifyStarted.code(), 501);
+        assert_eq!(MsgId::VerifySucceeded.code(), 502);
+        assert_eq!(MsgId::VerifyFailed.code(), 503);
+        assert_eq!(MsgId::VerifierMissing.code(), 504);
+        assert_eq!(MsgId::VerifyCounterExample.code(), 505);
+        assert_eq!(MsgId::VerifyOutputUnparsed.code(), 506);
+        assert_eq!(MsgId::VerifyStarted.to_string(), "SMCTL-0501");
+        assert_eq!(MsgId::VerifierMissing.to_string(), "SMCTL-0504");
+        assert_eq!(MsgId::VerifyCounterExample.to_string(), "SMCTL-0505");
+    }
+
+    #[test]
+    fn verify_default_severity_matches_spec() {
+        assert_eq!(
+            MsgId::VerifyStarted.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(
+            MsgId::VerifySucceeded.default_severity(),
+            Severity::Informational
+        );
+        assert_eq!(MsgId::VerifyFailed.default_severity(), Severity::Error);
+        assert_eq!(MsgId::VerifierMissing.default_severity(), Severity::Warning);
+        assert_eq!(
+            MsgId::VerifyCounterExample.default_severity(),
+            Severity::Error
+        );
+        assert_eq!(
+            MsgId::VerifyOutputUnparsed.default_severity(),
+            Severity::Warning
+        );
+    }
+
+    #[test]
+    fn verify_codes_sit_in_reserved_range() {
+        for id in [
+            MsgId::VerifyStarted,
+            MsgId::VerifySucceeded,
+            MsgId::VerifyFailed,
+            MsgId::VerifierMissing,
+            MsgId::VerifyCounterExample,
+            MsgId::VerifyOutputUnparsed,
+        ] {
+            let code = id.code();
+            assert!(
+                (500..=599).contains(&code),
+                "verify MSGID {id:?} code {code} outside reserved 500..=599"
             );
         }
     }

@@ -21,6 +21,10 @@ Thumbs.db
 
 # Git worktrees (sibling branches checked out for parallel work)
 .worktrees/
+.claude/worktrees/
+
+# Local tool and MCP server logs
+*.log
 
 # Secrets
 *.pem

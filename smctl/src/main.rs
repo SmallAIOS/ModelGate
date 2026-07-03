@@ -119,6 +119,20 @@ enum Commands {
         command: QualityCommands,
     },
 
+    /// Run formal-verification suites (Cedar policy / TLA+ model / Lean 4 proof / SPIN protocol)
+    Verify {
+        /// Filter to one verifier by name (`policy`, `model`, `proof`, `protocol`)
+        #[arg(long, global = true)]
+        verifier: Option<String>,
+
+        /// Treat warnings as errors when computing the gate exit code
+        #[arg(long, global = true)]
+        strict: bool,
+
+        #[command(subcommand)]
+        command: VerifyCommands,
+    },
+
     /// Talk to a running ModelGate instance (status, models, routes, test, logs)
     Gate {
         /// ModelGate endpoint URL (overrides MODELGATE_URL env and workspace.toml)
@@ -335,33 +349,54 @@ enum SpecCommands {
     New {
         /// Spec name
         name: String,
+        /// Repo to scaffold the spec into (default: smctl_home repo,
+        /// or the only registered repo when one exists).
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Fast-forward: check document completeness
     Ff {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        /// Disambiguate the spec by repo when bare (`--repo X` is
+        /// equivalent to passing `X:<name>`).
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Execute tasks from tasks.md
     Apply {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Archive a completed spec
     Archive {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Check spec completeness
     Validate {
-        /// Spec name (default: current)
+        /// Spec name in either bare (`name`) or qualified (`repo:name`)
+        /// form. Bare names must be unambiguous across registered repos.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Show spec progress
     Status {
-        /// Spec name (default: show all)
+        /// Spec name in either bare or qualified form. Omit to show
+        /// every spec across every registered repo.
         name: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
     },
-    /// List all specs
+    /// List all specs across every registered repo
     List,
 }
 
@@ -430,6 +465,40 @@ enum QualityCommands {
         /// Scope the scan to this subdirectory instead of the workspace root
         #[arg(long)]
         path: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum VerifyCommands {
+    /// Verify Cedar authorization policies (`[verify.policy].sources`)
+    Policy {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run TLA+ model checking (`[verify.model].specs`)
+    Model {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run Lean 4 proofs (`[verify.proof].roots`)
+    Proof {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run SPIN/Promela protocol verification (`[verify.protocol].specs`)
+    Protocol {
+        /// Emit a machine-readable JSON report on stdout
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enumerate which verifiers are reachable on PATH
+    Discover {
+        /// Emit the discovery list as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -622,6 +691,145 @@ fn open_in_browser(url: &str) -> std::io::Result<()> {
             "browser opener exited with status {status}"
         )))
     }
+}
+
+/// Render a [`smctl_verify::VerifyReport`] in human-readable form.
+/// Mirrors the table-and-detail layout used by `smctl quality`.
+fn render_verify_report_human(report: &smctl_verify::VerifyReport) {
+    use smctl_verify::Outcome;
+
+    println!("verifier: {}", report.verifier);
+    println!(
+        "outcome:  {}",
+        match report.outcome {
+            Outcome::Passed => "passed",
+            Outcome::Failed => "failed",
+            Outcome::NoSources => "no sources configured",
+            Outcome::ToolMissing => "tool missing",
+        }
+    );
+    if !report.sources.is_empty() {
+        println!();
+        println!("{:<8} SOURCE", "STATUS");
+        for row in &report.sources {
+            let status = match row.outcome {
+                Outcome::Passed => "passed",
+                Outcome::Failed => "failed",
+                _ => "—",
+            };
+            println!(
+                "{status:<8} {} {}",
+                row.source,
+                if row.note.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", row.note)
+                }
+            );
+        }
+    }
+    if !report.diagnostics.is_empty() {
+        println!();
+        println!("diagnostics:");
+        for d in &report.diagnostics {
+            println!("  - {d}");
+        }
+    }
+}
+
+/// Choose the openspec_dir for `smctl spec new`. Resolution order:
+///
+/// 1. `--repo <name>` — find that repo entry, use its openspec_dir.
+/// 2. The repo entry whose `[[repos]]` declared `smctl_home = true`.
+/// 3. The single registered repo, when only one is present (covers
+///    legacy single-repo workspaces and the synthetic `_workspace`).
+/// 4. Otherwise: error with a remediation clause that lists the
+///    registered repos and tells the operator to pass `--repo`.
+fn resolve_new_target(
+    repos: &[(String, std::path::PathBuf)],
+    manifest: &smctl_workspace::WorkspaceManifest,
+    repo_flag: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    if let Some(name) = repo_flag {
+        let target = repos
+            .iter()
+            .find(|(r, _)| r == name)
+            .with_context(|| {
+                let known: Vec<&str> = repos.iter().map(|(r, _)| r.as_str()).collect();
+                format!(
+                    "repo '{name}' is not registered in this workspace. \
+                     Known repos: {known:?}. \
+                     Pass `--repo <name>` with one of those, or `smctl workspace add` the repo first."
+                )
+            })?;
+        return Ok(target.1.clone());
+    }
+
+    if let Some(home) = manifest.repos.iter().find(|r| r.smctl_home)
+        && let Some((_, dir)) = repos.iter().find(|(r, _)| r == &home.name)
+    {
+        return Ok(dir.clone());
+    }
+
+    if repos.len() == 1 {
+        return Ok(repos[0].1.clone());
+    }
+
+    anyhow::bail!(
+        "no target repo for `smctl spec new`. \
+         The workspace has multiple registered repos and no `[[repos]]` entry declares `smctl_home = true`. \
+         Pass `--repo <name>` to pick one of: {:?}.",
+        repos.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>()
+    )
+}
+
+/// Resolve a spec name into a `RepoSpecRef` honouring `--repo` when
+/// set. Bare names are dispatched into [`smctl_spec::find_spec_in_repos`]
+/// which enforces the four-rule resolution table; `--repo X` plus a
+/// bare name `Y` is sugar for the qualified `X:Y`.
+fn resolve_existing_spec(
+    repos: &[(String, std::path::PathBuf)],
+    name: Option<&str>,
+    repo_flag: Option<&str>,
+) -> Result<smctl_spec::RepoSpecRef> {
+    let name = name.context(
+        "spec name required. \
+         Pass a bare name like `foo-v1`, the qualified form `repo:foo-v1`, or use `--repo <r>` plus a bare name. \
+         Run `smctl spec list` to see registered specs.",
+    )?;
+    let lookup_input = match repo_flag {
+        Some(r) if !name.contains(':') => format!("{r}:{name}"),
+        _ => name.to_string(),
+    };
+    smctl_spec::find_spec_in_repos(repos, &lookup_input).map_err(|e| anyhow::anyhow!(e))
+}
+
+/// Render a `Vec<RepoSpecInfo>` for human or JSON output. Human form
+/// groups specs by repo (one heading per repo); JSON form is the flat
+/// array `serde_json` produces from `RepoSpecInfo` directly.
+fn render_repo_specs(specs: &[smctl_spec::RepoSpecInfo], fmt: OutputFormat) -> String {
+    let specs_owned: Vec<smctl_spec::RepoSpecInfo> = specs.to_vec();
+    format_output_with(&specs_owned, fmt, |entries| {
+        if entries.is_empty() {
+            return "no specs found".to_string();
+        }
+        let mut out = String::new();
+        let mut current_repo = "";
+        for s in entries {
+            if s.repo != current_repo {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{}\n", s.repo));
+                current_repo = s.repo.as_str();
+            }
+            out.push_str(&format!(
+                "  {:<24} {:?}  [{}/{}]\n",
+                s.info.name, s.info.phase, s.info.tasks_done, s.info.tasks_total
+            ));
+        }
+        out.trim_end().to_string()
+    })
 }
 
 fn human_bytes(n: u64) -> String {
@@ -1273,16 +1481,51 @@ async fn run(cli: Cli) -> Result<i32> {
         Commands::Spec { command } => {
             let root = resolve_root()?;
             let manifest = smctl_workspace::WorkspaceManifest::load_from_root(&root)?;
-            let openspec_dir = root.join(&manifest.spec.openspec_dir);
+
+            // Build the per-repo (name, openspec_dir) slice the
+            // smctl-spec aggregating API expects. Manifest [[repos]]
+            // entries first, then a synthetic _workspace entry for
+            // legacy single-repo workspaces (de-duplicated by path).
+            let mut repos: Vec<(String, std::path::PathBuf)> = manifest
+                .repos
+                .iter()
+                .map(|r| {
+                    let path = r
+                        .path
+                        .clone()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| root.join(&r.name));
+                    (r.name.clone(), path.join(&manifest.spec.openspec_dir))
+                })
+                .collect();
+            smctl_spec::inject_synthetic_workspace_repo(
+                &root,
+                &manifest.spec.openspec_dir,
+                &mut repos,
+            );
+            // Final safety net: when no repo is registered and no
+            // openspec/ exists yet (fresh workspace, first `spec new`),
+            // synthesise a `_workspace` entry pointing at where the
+            // tree will land. inject_synthetic_workspace_repo bails
+            // when the directory is absent, which is fine for
+            // listing — but `spec new` needs a target.
+            if repos.is_empty() {
+                repos.push((
+                    "_workspace".to_string(),
+                    root.join(&manifest.spec.openspec_dir),
+                ));
+            }
 
             match command {
-                SpecCommands::New { name } => {
+                SpecCommands::New { name, repo } => {
+                    let target_dir = resolve_new_target(&repos, &manifest, repo.as_deref())?;
+
                     if dry_run {
-                        println!("would create spec '{name}'");
+                        println!("would create spec '{name}' in {}", target_dir.display());
                         return Ok(exit_code::DRY_RUN);
                     }
 
-                    let info = smctl_spec::new_spec(&openspec_dir, &name)?;
+                    let info = smctl_spec::new_spec(&target_dir, &name)?;
                     tracing::info!(
                         msgid = %smctl_log::MsgId::SpecCreated,
                         name = %info.name,
@@ -1323,19 +1566,20 @@ async fn run(cli: Cli) -> Result<i32> {
 
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Validate { name } => {
-                    let spec_name = name.context("spec name required")?;
-                    let result = smctl_spec::validate(&openspec_dir, &spec_name)?;
+                SpecCommands::Validate { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let result = smctl_spec::validate(&r.openspec_dir, &r.name)?;
+                    let qualified = r.qualified();
                     println!(
                         "{}",
-                        format_output_with(&result, fmt, |r| {
-                            if r.valid {
-                                format!("spec '{}' is valid", r.name)
+                        format_output_with(&result, fmt, |result_ref| {
+                            if result_ref.valid {
+                                format!("spec '{qualified}' is valid")
                             } else {
                                 format!(
-                                    "spec '{}' has issues:\n{}",
-                                    r.name,
-                                    r.issues
+                                    "spec '{qualified}' has issues:\n{}",
+                                    result_ref
+                                        .issues
                                         .iter()
                                         .map(|i| format!("  - {i}"))
                                         .collect::<Vec<_>>()
@@ -1350,84 +1594,57 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::SPEC_ERROR)
                     }
                 }
-                SpecCommands::Status { name } => {
+                SpecCommands::Status { name, repo } => {
                     if let Some(name) = name {
-                        let info = smctl_spec::spec_info(&openspec_dir, &name)?;
+                        let r = resolve_existing_spec(&repos, Some(&name), repo.as_deref())?;
+                        let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
+                        let qualified = r.qualified();
                         println!(
                             "{}",
                             format_output_with(&info, fmt, |i| {
                                 format!(
                                     "{}: {:?} [{}/{}]",
-                                    i.name, i.phase, i.tasks_done, i.tasks_total
+                                    qualified, i.phase, i.tasks_done, i.tasks_total
                                 )
                             })
                         );
                     } else {
-                        let specs = smctl_spec::list_specs(&openspec_dir)?;
-                        println!(
-                            "{}",
-                            format_output_with(&specs, fmt, |ss| {
-                                ss.iter()
-                                    .map(|s| {
-                                        format!(
-                                            "  {:<24} {:?}  [{}/{}]",
-                                            s.name, s.phase, s.tasks_done, s.tasks_total
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            })
-                        );
+                        let specs = smctl_spec::list_specs_across(&repos)?;
+                        println!("{}", render_repo_specs(&specs, fmt));
                     }
                     Ok(exit_code::SUCCESS)
                 }
                 SpecCommands::List => {
-                    let specs = smctl_spec::list_specs(&openspec_dir)?;
-                    println!(
-                        "{}",
-                        format_output_with(&specs, fmt, |ss| {
-                            if ss.is_empty() {
-                                "no specs found".to_string()
-                            } else {
-                                ss.iter()
-                                    .map(|s| {
-                                        format!(
-                                            "  {:<24} {:?}  [{}/{}]",
-                                            s.name, s.phase, s.tasks_done, s.tasks_total
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            }
-                        })
-                    );
+                    let specs = smctl_spec::list_specs_across(&repos)?;
+                    println!("{}", render_repo_specs(&specs, fmt));
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Archive { name } => {
-                    let spec_name = name.context("spec name required")?;
+                SpecCommands::Archive { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let qualified = r.qualified();
                     if dry_run {
-                        println!("would archive spec '{spec_name}'");
+                        println!("would archive spec '{qualified}'");
                         return Ok(exit_code::DRY_RUN);
                     }
-                    let dest = smctl_spec::archive(&openspec_dir, &spec_name)?;
+                    let dest = smctl_spec::archive_in_repo(&r.openspec_dir, &r.name)?;
                     tracing::info!(
                         msgid = %smctl_log::MsgId::SpecArchived,
-                        name = %spec_name,
+                        name = %qualified,
                         path = %dest.display(),
                         "spec archived"
                     );
-                    println!("archived spec '{}' to {}", spec_name, dest.display());
+                    println!("archived spec '{qualified}' to {}", dest.display());
 
                     // Auto-finish feature branch if workspace is available
                     if let Ok(root) = resolve_root()
                         && let Ok(manifest) =
                             smctl_workspace::WorkspaceManifest::load_from_root(&root)
                     {
-                        match smctl_flow::feature_finish(&root, &manifest, &spec_name) {
+                        match smctl_flow::feature_finish(&root, &manifest, &r.name) {
                             Ok(result) => {
                                 tracing::info!(
                                     msgid = %smctl_log::MsgId::FeatureFinished,
-                                    name = %spec_name,
+                                    name = %r.name,
                                     branch = %result.branch_name,
                                     "feature branch merged"
                                 );
@@ -1445,14 +1662,12 @@ async fn run(cli: Cli) -> Result<i32> {
 
                     Ok(exit_code::SUCCESS)
                 }
-                SpecCommands::Ff { name } => {
-                    let spec_name = name.context("spec name required")?;
+                SpecCommands::Ff { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let result = smctl_spec::validate(&r.openspec_dir, &r.name)?;
+                    let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
 
-                    // Validate document completeness
-                    let result = smctl_spec::validate(&openspec_dir, &spec_name)?;
-                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
-
-                    println!("spec: {spec_name}");
+                    println!("spec: {}", r.qualified());
                     println!("phase: {:?}", info.phase);
                     println!(
                         "documents: proposal={} design={} tasks={}",
@@ -1482,13 +1697,15 @@ async fn run(cli: Cli) -> Result<i32> {
                         Ok(exit_code::GENERAL_ERROR)
                     }
                 }
-                SpecCommands::Apply { name } => {
-                    let spec_name = name.context("spec name required")?;
-                    let info = smctl_spec::spec_info(&openspec_dir, &spec_name)?;
+                SpecCommands::Apply { name, repo } => {
+                    let r = resolve_existing_spec(&repos, name.as_deref(), repo.as_deref())?;
+                    let info = smctl_spec::spec_info(&r.openspec_dir, &r.name)?;
+                    let qualified = r.qualified();
 
                     if !info.has_tasks {
                         anyhow::bail!(
-                            "spec '{spec_name}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {spec_name}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {spec_name}` and recreating with `smctl spec new {spec_name}`."
+                            "spec '{qualified}' has no tasks.md. Apply has no task list to execute. Run `smctl spec ff {qualified}` to see which documents are missing, then re-scaffold by archiving with `smctl spec archive {qualified}` and recreating with `smctl spec new {}`.",
+                            r.name
                         );
                     }
 
@@ -1512,7 +1729,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
 
                     println!(
-                        "spec: {spec_name} — {}/{} tasks complete",
+                        "spec: {qualified} — {}/{} tasks complete",
                         done.len(),
                         done.len() + pending.len()
                     );
@@ -1628,7 +1845,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_audit_available() {
@@ -1711,7 +1929,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_machete_available() {
@@ -1783,7 +2002,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_geiger_available() {
@@ -1859,7 +2079,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 let want_json = json || cli.json || !is_stdout_tty();
 
                 let root = resolve_root().unwrap_or_else(|_| {
-                    std::env::current_dir().expect("failed to get current directory")
+                    let cwd = std::env::current_dir().expect("failed to get current directory");
+                    smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                 });
 
                 if !smctl_quality::cargo_modules_available() {
@@ -1941,7 +2162,8 @@ async fn run(cli: Cli) -> Result<i32> {
 
                 let root = path.clone().unwrap_or_else(|| {
                     resolve_root().unwrap_or_else(|_| {
-                        std::env::current_dir().expect("failed to get current directory")
+                        let cwd = std::env::current_dir().expect("failed to get current directory");
+                        smctl::find_cargo_root(&cwd).unwrap_or(cwd)
                     })
                 });
 
@@ -2022,6 +2244,236 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
             }
         },
+
+        Commands::Verify {
+            verifier: verifier_filter,
+            strict,
+            command,
+        } => {
+            let workspace_root =
+                resolve_root().unwrap_or_else(|_| std::env::current_dir().unwrap());
+            let workspace_manifest =
+                smctl_workspace::WorkspaceManifest::load_from_root(&workspace_root).ok();
+
+            // Build the per-repo path map. With a workspace.toml, walk
+            // [[repos]]; without, fall back to a single anonymous "."
+            // entry rooted at the cwd so `smctl verify` is at least
+            // useful in repo-local invocations.
+            let repos: std::collections::BTreeMap<String, std::path::PathBuf> =
+                match workspace_manifest.as_ref() {
+                    Some(m) => m
+                        .repos
+                        .iter()
+                        .map(|r| {
+                            let path = r
+                                .path
+                                .clone()
+                                .map(std::path::PathBuf::from)
+                                .unwrap_or_else(|| workspace_root.join(&r.name));
+                            (r.name.clone(), path)
+                        })
+                        .collect(),
+                    None => {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert(".".into(), workspace_root.clone());
+                        m
+                    }
+                };
+
+            // Per-verb [verify.<X>] subsection -> VerifyManifest. The
+            // mapping (policy.sources / model.specs / proof.roots /
+            // protocol.specs) lives in smctl_verify::manifest_from_workspace
+            // so the smctl-mcp side stays in sync without copy-pasting
+            // the same match arms.
+            let make_ctx = |verb: &str| smctl_verify::VerifyContext {
+                workspace_root: workspace_root.clone(),
+                repos: repos.clone(),
+                manifest: smctl_verify::manifest_from_workspace(
+                    workspace_manifest.as_ref().and_then(|m| m.verify.as_ref()),
+                    verb,
+                ),
+                strict,
+                verifier_filter: verifier_filter.clone(),
+            };
+
+            let registry = smctl_verify::Registry::with_default_verifiers();
+
+            match command {
+                VerifyCommands::Discover { json } => {
+                    let want_json = json || cli.json || !is_stdout_tty();
+                    let entries: Vec<_> = registry
+                        .iter()
+                        .map(|v| {
+                            let d = v.discover();
+                            serde_json::json!({
+                                "verifier": v.name(),
+                                "discovery": d,
+                            })
+                        })
+                        .collect();
+                    if want_json {
+                        println!("{}", serde_json::to_string_pretty(&entries)?);
+                    } else {
+                        println!("{:<10} {:<10} DETAIL", "VERIFIER", "STATUS");
+                        for v in registry.iter() {
+                            match v.discover() {
+                                smctl_verify::DiscoveryResult::Found { path, version } => {
+                                    println!(
+                                        "{:<10} {:<10} {} ({})",
+                                        v.name(),
+                                        "found",
+                                        path,
+                                        if version.is_empty() {
+                                            "no version"
+                                        } else {
+                                            &version
+                                        }
+                                    );
+                                }
+                                smctl_verify::DiscoveryResult::NotInstalled {
+                                    tool,
+                                    install_hint,
+                                } => {
+                                    println!(
+                                        "{:<10} {:<10} not installed — {tool}: {install_hint}",
+                                        v.name(),
+                                        "missing"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(exit_code::SUCCESS)
+                }
+                other => {
+                    let (subcommand_name, want_json) = match other {
+                        VerifyCommands::Policy { json } => ("policy", json),
+                        VerifyCommands::Model { json } => ("model", json),
+                        VerifyCommands::Proof { json } => ("proof", json),
+                        VerifyCommands::Protocol { json } => ("protocol", json),
+                        VerifyCommands::Discover { .. } => unreachable!(),
+                    };
+                    let want_json = want_json || cli.json || !is_stdout_tty();
+                    let verifier = match registry.find(subcommand_name) {
+                        Some(v) => v,
+                        None => {
+                            let msg = format!("verifier '{subcommand_name}' is not registered");
+                            if want_json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "error": "verifier_not_registered",
+                                        "message": msg,
+                                    }))?
+                                );
+                            } else {
+                                eprintln!("error: {msg}");
+                                eprintln!(
+                                    "remediation: this is an internal smctl bug — please file an issue against ModelGate"
+                                );
+                            }
+                            return Ok(exit_code::GENERAL_ERROR);
+                        }
+                    };
+
+                    let ctx = make_ctx(subcommand_name);
+
+                    if dry_run {
+                        println!(
+                            "would run verifier '{}' against {} configured source pattern(s)",
+                            subcommand_name,
+                            ctx.manifest.sources.len()
+                        );
+                        return Ok(exit_code::DRY_RUN);
+                    }
+
+                    tracing::info!(
+                        msgid = %smctl_log::MsgId::VerifyStarted,
+                        verifier = subcommand_name,
+                        sources = ctx.manifest.sources.len() as u64,
+                        "verify started",
+                    );
+                    let report = verifier.run(&ctx);
+                    match report.outcome {
+                        smctl_verify::Outcome::Passed | smctl_verify::Outcome::NoSources => {
+                            tracing::info!(
+                                msgid = %smctl_log::MsgId::VerifySucceeded,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                "verify succeeded",
+                            );
+                        }
+                        smctl_verify::Outcome::Failed => {
+                            tracing::error!(
+                                msgid = %smctl_log::MsgId::VerifyFailed,
+                                verifier = subcommand_name,
+                                source_count = report.sources.len() as u64,
+                                diagnostic_count = report.diagnostics.len() as u64,
+                                "verify failed",
+                            );
+                        }
+                        smctl_verify::Outcome::ToolMissing => {
+                            tracing::warn!(
+                                msgid = %smctl_log::MsgId::VerifierMissing,
+                                verifier = subcommand_name,
+                                "verifier tool missing on PATH",
+                            );
+                        }
+                    }
+                    if want_json {
+                        if matches!(report.outcome, smctl_verify::Outcome::ToolMissing) {
+                            // The capability spec pins a structured
+                            // envelope for the missing-tool case:
+                            // top-level error/tool fields plus the
+                            // install hint, mirroring the smctl
+                            // quality command family.
+                            let (tool, install_hint) = match verifier.discover() {
+                                smctl_verify::DiscoveryResult::NotInstalled {
+                                    tool,
+                                    install_hint,
+                                } => (tool, install_hint),
+                                smctl_verify::DiscoveryResult::Found { path, .. } => (
+                                    path,
+                                    report.diagnostics.first().cloned().unwrap_or_default(),
+                                ),
+                            };
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "error": "tool_missing",
+                                    "verifier": report.verifier,
+                                    "tool": tool,
+                                    "install_hint": install_hint,
+                                }))?
+                            );
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&report)?);
+                        }
+                    } else {
+                        render_verify_report_human(&report);
+                    }
+
+                    let exit = match report.outcome {
+                        smctl_verify::Outcome::Passed | smctl_verify::Outcome::NoSources => {
+                            exit_code::SUCCESS
+                        }
+                        smctl_verify::Outcome::Failed => exit_code::GENERAL_ERROR,
+                        smctl_verify::Outcome::ToolMissing => {
+                            // ToolMissing is gated by --strict: when set
+                            // we treat it as a failure; otherwise it's
+                            // an informational success exit so a developer
+                            // without TLC installed isn't blocked.
+                            if ctx.strict {
+                                exit_code::GENERAL_ERROR
+                            } else {
+                                exit_code::SUCCESS
+                            }
+                        }
+                    };
+                    Ok(exit)
+                }
+            }
+        }
 
         Commands::Config { command } => {
             let mut config = smctl::SmctlConfig::load_user_config()?;

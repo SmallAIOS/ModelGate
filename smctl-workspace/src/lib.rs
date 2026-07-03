@@ -26,6 +26,14 @@ pub struct WorkspaceManifest {
     /// Declared in `openspec/changes/smctl-gate-v1/specs/gate-api.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateManifestSection>,
+
+    /// Optional `[verify]` table. Declares per-verifier source roots
+    /// and gating thresholds. Each subsection (`policy`, `model`,
+    /// `proof`, `protocol`) is independently optional. When absent,
+    /// `smctl verify <verb>` reports "no sources configured".
+    /// Declared in `openspec/changes/formal-methods-v1/specs/smctl-verify/spec.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<VerifyManifestSection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +215,77 @@ pub struct GateManifestSection {
     pub timeout_secs: Option<u64>,
 }
 
+/// The `[verify]` section of `workspace.toml`.
+///
+/// Each subsection (`policy`, `model`, `proof`, `protocol`) is
+/// independently optional. The CLI consults the subsection that
+/// matches the chosen `smctl verify <verb>` and ignores the rest.
+///
+/// Field names per subsection match the natural domain vocabulary:
+/// `sources` for Cedar policies, `specs` for TLA+ and SPIN, `roots`
+/// for Lean 4 (which builds whole projects, not single files). Each
+/// subsection rejects unknown fields so typos surface at parse time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyManifestSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicyVerifierSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelVerifierSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<ProofVerifierSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<ProtocolVerifierSection>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyVerifierSection {
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default = "default_verify_fail_on")]
+    pub fail_on: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelVerifierSection {
+    #[serde(default)]
+    pub specs: Vec<String>,
+    #[serde(default = "default_verify_fail_on")]
+    pub fail_on: String,
+    /// Path to `tla2tools.jar` for the `java -jar` fallback when no
+    /// `tlc` binary is on PATH. Relative paths resolve against the
+    /// workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jar: Option<String>,
+    /// TLC worker thread count. Omitted means `-workers auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProofVerifierSection {
+    #[serde(default)]
+    pub roots: Vec<String>,
+    #[serde(default = "default_verify_fail_on")]
+    pub fail_on: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolVerifierSection {
+    #[serde(default)]
+    pub specs: Vec<String>,
+    #[serde(default = "default_verify_fail_on")]
+    pub fail_on: String,
+}
+
+fn default_verify_fail_on() -> String {
+    "any".to_string()
+}
+
 /// Map a facility name from the spec's table to its RFC 5424 numeric
 /// code. Returns `None` for unknown names. Exposed so the CLI
 /// precedence resolver can translate the manifest value without
@@ -321,6 +400,7 @@ pub fn init_workspace(root: &Path, name: &str) -> Result<WorkspaceManifest> {
         spec: SpecConfig::default(),
         logging: None,
         gate: None,
+        verify: None,
     };
 
     manifest.save_to_root(root)?;
@@ -790,6 +870,175 @@ bogus = "nope"
             msg.contains("bogus"),
             "error should cite the unknown key: {msg}"
         );
+    }
+
+    #[test]
+    fn test_verify_section_parses_all_subsections() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.policy]
+sources = ["security/policies/*.cedar"]
+fail_on = "any"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+fail_on = "error"
+
+[verify.proof]
+roots = ["formal/lean"]
+fail_on = "any"
+
+[verify.protocol]
+specs = ["formal/spin/*.pml"]
+fail_on = "any"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let v = manifest.verify.expect("verify section present");
+
+        let policy = v.policy.expect("policy");
+        assert_eq!(
+            policy.sources,
+            vec!["security/policies/*.cedar".to_string()]
+        );
+        assert_eq!(policy.fail_on, "any");
+
+        let model = v.model.expect("model");
+        assert_eq!(model.specs, vec!["formal/tla/*.tla".to_string()]);
+        assert_eq!(model.fail_on, "error");
+
+        let proof = v.proof.expect("proof");
+        assert_eq!(proof.roots, vec!["formal/lean".to_string()]);
+
+        let protocol = v.protocol.expect("protocol");
+        assert_eq!(protocol.specs, vec!["formal/spin/*.pml".to_string()]);
+    }
+
+    #[test]
+    fn test_verify_model_jar_and_workers_parse() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+jar = "tools/tla2tools.jar"
+workers = 4
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let model = manifest.verify.unwrap().model.unwrap();
+        assert_eq!(model.jar.as_deref(), Some("tools/tla2tools.jar"));
+        assert_eq!(model.workers, Some(4));
+    }
+
+    #[test]
+    fn test_verify_model_jar_and_workers_default_to_none() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let model = manifest.verify.unwrap().model.unwrap();
+        assert_eq!(model.jar, None);
+        assert_eq!(model.workers, None);
+    }
+
+    #[test]
+    fn test_verify_model_jar_typo_fails_at_parse_time() {
+        let toml_text = r#"
+[workspace]
+name = "verify-ws"
+
+[verify.model]
+specs = ["formal/tla/*.tla"]
+jars = ["oops.jar"]
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("jars"),
+            "error should cite the unknown field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_verify_section_absent_is_none() {
+        let toml_text = r#"
+[workspace]
+name = "no-verify"
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        assert!(manifest.verify.is_none());
+    }
+
+    #[test]
+    fn test_verify_section_only_one_subsection_others_default_to_none() {
+        let toml_text = r#"
+[workspace]
+name = "policy-only"
+
+[verify.policy]
+sources = ["a/*.cedar"]
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let v = manifest.verify.unwrap();
+        assert!(v.policy.is_some());
+        assert!(v.model.is_none());
+        assert!(v.proof.is_none());
+        assert!(v.protocol.is_none());
+    }
+
+    #[test]
+    fn test_verify_section_rejects_unknown_subsection() {
+        let toml_text = r#"
+[workspace]
+name = "strict-verify"
+
+[verify.bogus]
+sources = ["x"]
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("bogus"),
+            "error should cite the unknown subsection: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_verify_section_rejects_unknown_field_within_subsection() {
+        let toml_text = r#"
+[workspace]
+name = "strict-verify"
+
+[verify.policy]
+sources = ["a"]
+nonsense = true
+"#;
+        let err = WorkspaceManifest::parse(toml_text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nonsense"),
+            "error should cite the unknown field: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_verify_section_default_fail_on_is_any() {
+        let toml_text = r#"
+[workspace]
+name = "minimal"
+
+[verify.policy]
+sources = ["a"]
+"#;
+        let manifest = WorkspaceManifest::parse(toml_text).unwrap();
+        let policy = manifest.verify.unwrap().policy.unwrap();
+        assert_eq!(policy.fail_on, "any");
     }
 
     #[test]
