@@ -13,6 +13,7 @@ const SHELL: Shell<'static> = Shell {
     version_args: &["-V"],
     run_args: &["-a"],
     install_hint: "install via `brew install spin` (macOS) or your distro's package manager",
+    env_override: None,
 };
 
 #[derive(Debug, Default)]

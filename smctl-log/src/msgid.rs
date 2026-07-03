@@ -53,6 +53,8 @@ pub enum MsgId {
     VerifySucceeded,
     VerifyFailed,
     VerifierMissing,
+    VerifyCounterExample,
+    VerifyOutputUnparsed,
 
     // smctl-quality (0400..0499)
     QualityCheckStarted,
@@ -95,6 +97,8 @@ impl MsgId {
             MsgId::VerifySucceeded => 502,
             MsgId::VerifyFailed => 503,
             MsgId::VerifierMissing => 504,
+            MsgId::VerifyCounterExample => 505,
+            MsgId::VerifyOutputUnparsed => 506,
             MsgId::QualityCheckStarted => 400,
             MsgId::QualityCheckCompleted => 401,
             MsgId::QualityCheckFailed => 402,
@@ -120,14 +124,16 @@ impl MsgId {
             | MsgId::QualityCheckFailed
             | MsgId::DsmCycleDetected
             | MsgId::DependencyVulnerability
-            | MsgId::VerifyFailed => Severity::Error,
+            | MsgId::VerifyFailed
+            | MsgId::VerifyCounterExample => Severity::Error,
             MsgId::McpClientDisconnected
             | MsgId::ComplexityThresholdExceeded
             | MsgId::DependencyUnused
             | MsgId::FerroceneIncompatibility
             | MsgId::WebUpstreamUnreachable
             | MsgId::WebUpstreamTimeout
-            | MsgId::VerifierMissing => Severity::Warning,
+            | MsgId::VerifierMissing
+            | MsgId::VerifyOutputUnparsed => Severity::Warning,
             MsgId::UnsafeBlockFound => Severity::Notice,
             _ => Severity::Informational,
         }
@@ -331,8 +337,11 @@ mod tests {
         assert_eq!(MsgId::VerifySucceeded.code(), 502);
         assert_eq!(MsgId::VerifyFailed.code(), 503);
         assert_eq!(MsgId::VerifierMissing.code(), 504);
+        assert_eq!(MsgId::VerifyCounterExample.code(), 505);
+        assert_eq!(MsgId::VerifyOutputUnparsed.code(), 506);
         assert_eq!(MsgId::VerifyStarted.to_string(), "SMCTL-0501");
         assert_eq!(MsgId::VerifierMissing.to_string(), "SMCTL-0504");
+        assert_eq!(MsgId::VerifyCounterExample.to_string(), "SMCTL-0505");
     }
 
     #[test]
@@ -347,6 +356,14 @@ mod tests {
         );
         assert_eq!(MsgId::VerifyFailed.default_severity(), Severity::Error);
         assert_eq!(MsgId::VerifierMissing.default_severity(), Severity::Warning);
+        assert_eq!(
+            MsgId::VerifyCounterExample.default_severity(),
+            Severity::Error
+        );
+        assert_eq!(
+            MsgId::VerifyOutputUnparsed.default_severity(),
+            Severity::Warning
+        );
     }
 
     #[test]
@@ -356,6 +373,8 @@ mod tests {
             MsgId::VerifySucceeded,
             MsgId::VerifyFailed,
             MsgId::VerifierMissing,
+            MsgId::VerifyCounterExample,
+            MsgId::VerifyOutputUnparsed,
         ] {
             let code = id.code();
             assert!(

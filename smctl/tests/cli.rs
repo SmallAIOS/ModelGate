@@ -1548,3 +1548,215 @@ fn test_spec_new_unknown_repo_flag_errors_with_remediation() {
         .stderr(predicate::str::contains("RepoA"))
         .stderr(predicate::str::contains("RepoB"));
 }
+
+// --- verify model deep parsing (tla-plus-runner-v1) -----------------
+//
+// The full TLC pipeline runs against fixture scripts injected via
+// SMCTL_VERIFY_TLC_BIN, so no JVM or tla2tools.jar is needed on the
+// test host. Parser-level coverage lives in smctl-verify/src/tlc.rs.
+
+/// Write a `.smctl/workspace.toml` declaring one repo and a
+/// `[verify.model]` section globbing `specs/*.tla` inside it.
+fn write_model_workspace(dir: &Path, repo_dir: &Path) {
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.model]
+specs = ["specs/*.tla"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+}
+
+/// Write an executable fake-tlc shell script.
+fn write_fake_tlc(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+const FAKE_PASS_TRANSCRIPT: &str = r#"cat <<'TLCEOF'
+TLC2 Version 2.19 of 08 August 2024
+Model checking completed. No error has been found.
+2048 states generated, 512 distinct states found, 0 states left on queue.
+TLCEOF
+exit 0"#;
+
+const FAKE_INVARIANT_TRANSCRIPT: &str = r#"cat <<'TLCEOF'
+TLC2 Version 2.19 of 08 August 2024
+Error: Invariant MutualExclusion is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ owner = NoThread
+
+State 2: <Acquire line 22, col 3 to line 25, col 20 of module Lock>
+/\ owner = t1
+
+State 3: <Acquire line 22, col 3 to line 25, col 20 of module Lock>
+/\ owner = t2
+
+142 states generated, 37 distinct states found, 11 states left on queue.
+TLCEOF
+exit 12"#;
+
+#[test]
+fn test_verify_model_passes_with_parsed_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Sched.tla"),
+        "---- MODULE Sched ----\n====\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let tlc = write_fake_tlc(dir.path(), "fake-tlc-pass", FAKE_PASS_TRANSCRIPT);
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_generated\": 2048"))
+        .stdout(predicate::str::contains("\"distinct_states\": 512"))
+        .stdout(predicate::str::contains(
+            "2048 states generated, 512 distinct",
+        ));
+}
+
+#[test]
+fn test_verify_model_invariant_violation_reports_property_and_trace() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Lock.tla"),
+        "---- MODULE Lock ----\n====\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let tlc = write_fake_tlc(dir.path(), "fake-tlc-violation", FAKE_INVARIANT_TRANSCRIPT);
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("MutualExclusion"))
+        .stdout(predicate::str::contains("\"kind\": \"invariant\""))
+        .stdout(predicate::str::contains("\"trace_states\": 3"))
+        .stdout(predicate::str::contains("Counter-example trace:"))
+        .stdout(predicate::str::contains("owner = NoThread"));
+}
+
+#[test]
+fn test_verify_model_tool_missing_emits_spec_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("X.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+
+    // Point the override at a nonexistent binary and make sure the
+    // jar fallbacks can't fire either.
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", "/nonexistent/smctl-fake-tlc")
+        .env_remove("TLA2TOOLS_JAR")
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success() // tool_missing exits 0 without --strict
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\""))
+        .stdout(predicate::str::contains("\"tool\": \"tlc\""))
+        .stdout(predicate::str::contains("TLA2TOOLS_JAR"));
+}
+
+#[test]
+fn test_verify_model_piped_output_is_pure_json_despite_noisy_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("N.tla"), "").unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    // A tool that spews unstructured noise on both streams and exits 0.
+    let tlc = write_fake_tlc(
+        dir.path(),
+        "fake-tlc-noisy",
+        "echo RAW-TLC-NOISE-ON-STDOUT\necho RAW-TLC-NOISE-ON-STDERR >&2\nexit 0",
+    );
+
+    let output = smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // The whole of stdout must parse as one JSON document — captured
+    // tool output must never interleave (spec: Captured tool output).
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not pure JSON: {e}\nstdout:\n{stdout}"));
+    assert_eq!(value["outcome"], "passed");
+    assert!(
+        !stdout.contains("RAW-TLC-NOISE-ON-STDOUT"),
+        "raw tool output leaked into smctl stdout"
+    );
+}
+
+#[test]
+fn test_verify_model_passes_config_workers_and_metadir_args() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("specs")).unwrap();
+    std::fs::write(repo_dir.join("specs").join("Lock.tla"), "").unwrap();
+    std::fs::write(
+        repo_dir.join("specs").join("Lock.cfg"),
+        "INIT Init\nNEXT Next\n",
+    )
+    .unwrap();
+    write_model_workspace(dir.path(), &repo_dir);
+    let args_file = dir.path().join("captured-args.txt");
+    let tlc = write_fake_tlc(
+        dir.path(),
+        "fake-tlc-args",
+        &format!(
+            "echo \"$@\" >> {}\n{}",
+            args_file.display(),
+            FAKE_PASS_TRANSCRIPT
+        ),
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_TLC_BIN", &tlc)
+        .args(["verify", "model", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let captured = std::fs::read_to_string(&args_file).unwrap();
+    // Last line is the real run (earlier lines are discovery probes).
+    let run_line = captured.lines().last().unwrap();
+    assert!(run_line.contains("-workers auto"), "args: {run_line}");
+    assert!(run_line.contains("-metadir"), "args: {run_line}");
+    assert!(run_line.contains("-config Lock.cfg"), "args: {run_line}");
+    assert!(run_line.ends_with("Lock.tla"), "args: {run_line}");
+}
