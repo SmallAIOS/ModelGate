@@ -28,7 +28,7 @@
 
 - [x] 5.1 `openspec validate --all --strict` passes
 - [x] 5.2 `cargo fmt`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace` all pass
-- [ ] 5.3 Open PR from `change/spin-protocol-runner-v1` into `develop`; CI Gate green; adversarial review pass on the diff
+- [x] 5.3 Open PR from `change/spin-protocol-runner-v1` into `develop`; CI Gate green; adversarial review pass on the diff — PR #34, CI green three times (initial + two review-fix waves), 9 review-confirmed defects fixed, squash-merged 2026-07-03
 
 ## 6. Adversarial review fixes (empirically verified against SPIN 6.5.2)
 

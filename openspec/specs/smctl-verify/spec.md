@@ -124,7 +124,7 @@ The MSGID catalog SHALL reserve `SMCTL-0500..0599` for verify. The allocated MSG
 
 ### Requirement: TLA+ deep model checking
 
-`smctl verify model` SHALL run TLC against each configured `.tla` source and parse its output into structured results. The invocation MUST run in the spec file's directory, MUST pass `-config <stem>.cfg` when a same-named config file sits beside the spec, MUST direct TLC's metadata scratch (`-metadir`) into a temporary directory outside the target repo, and MUST use `-workers auto` unless `[verify.model] workers` overrides it.
+`smctl verify model` SHALL run TLC against each configured `.tla` source and parse its output into structured results. The invocation MUST run in the spec file's directory, MUST pass `-config <stem>.cfg` when a same-named config file sits beside the spec, MUST direct TLC's metadata scratch (`-metadir`) into a temporary directory outside the target repo, and MUST use `-workers auto` unless `[verify.model] workers` overrides it. The structured per-source `detail` object SHALL be polymorphic across verifier domains: model rows carry model-checking fields, protocol rows carry protocol fields, and each domain's rows serialize only its own field names.
 
 #### Scenario: Passing model reports statistics
 
@@ -152,6 +152,11 @@ The MSGID catalog SHALL reserve `SMCTL-0500..0599` for verify. The allocated MSG
 - **WHEN** no `tlc` binary is on PATH but `java` is present and a `tla2tools.jar` is declared via `[verify.model] jar` or the `TLA2TOOLS_JAR` environment variable
 - **THEN** `smctl verify model` MUST run TLC as `java -jar <jar>` and behave identically to the PATH-binary case
 
+#### Scenario: Model detail JSON shape is unchanged by the protocol extension
+
+- **WHEN** a model row with detail is serialized after protocol support lands
+- **THEN** the JSON MUST be identical to the pre-protocol shape (no tag or wrapper field introduced)
+
 ### Requirement: Captured tool output
 
 Shell-out verifiers SHALL capture child stdout and stderr rather than inheriting smctl's stdio. Tool output MUST never interleave with smctl's own stdout; when a run fails, the leading lines of captured output MUST be folded into the failure note so signal is preserved.
@@ -160,3 +165,45 @@ Shell-out verifiers SHALL capture child stdout and stderr rather than inheriting
 
 - **WHEN** the operator runs `smctl verify model | tee report.txt` and TLC actually executes
 - **THEN** the captured output MUST be valid JSON parseable by `serde_json`, containing no raw TLC lines outside the report object
+
+### Requirement: SPIN deep protocol verification
+
+`smctl verify protocol` SHALL run the full SPIN verification pipeline for each configured `.pml` source — `spin -a` code generation, C compilation of the generated pan verifier, and a `pan -a` run with acceptance-cycle detection — entirely inside a per-source temporary work directory so no `pan.*` or `.trail` artifact lands in the operator's repository. Pan output SHALL be parsed into structured results.
+
+#### Scenario: Verified protocol reports statistics
+
+- **WHEN** pan completes with `errors: 0`
+- **THEN** the source row MUST report `passed`
+- **AND** the row's `detail` object MUST carry `states_stored`, `states_matched`, and `depth_reached` parsed from pan's summary
+
+#### Scenario: Assertion violation renders a bounded trail excerpt
+
+- **WHEN** pan reports a non-zero error count with an assertion violation and writes a `.trail` file
+- **THEN** the source row MUST report `failed`
+- **AND** `detail.violation` MUST classify the failure and carry the trail step count
+- **AND** the runner MUST replay the trail with `spin -t -p` and include a bounded excerpt (first 4 and last 2 steps with an elision marker) in the diagnostics, closed by a three-part line with the exact reproduce commands
+- **AND** the run MUST emit `SMCTL-0505` at Error severity
+
+#### Scenario: Acceptance cycle and invalid end state classify distinctly
+
+- **WHEN** pan reports `acceptance cycle` or `invalid end state`
+- **THEN** `detail.violation.kind` MUST read `acceptance_cycle` or `invalid_end_state` respectively
+
+#### Scenario: Unparsed pan failure falls back safely
+
+- **WHEN** pan exits non-zero (or reports a non-zero error count) but its output matches no known pattern
+- **THEN** the source row MUST still report `failed`
+- **AND** the run MUST emit `SMCTL-0506` at Warning severity
+- **AND** the diagnostic MUST quote the first lines of raw pan output
+
+#### Scenario: Missing C compiler is distinguishable from missing spin
+
+- **WHEN** `spin` is available but no `cc` is on PATH and the operator runs `smctl verify protocol --json`
+- **THEN** stdout MUST contain a JSON object whose `error` field is `"tool_missing"` and whose `tool` field is `"cc"`
+- **AND** the install hint MUST name the Xcode Command Line Tools and the distro build-essential package
+
+#### Scenario: Spin syntax error fails at the generation step
+
+- **WHEN** `spin -a` rejects the Promela source
+- **THEN** the source row MUST report `failed` with the spin error quoted and a reproduce command
+- **AND** the compile and pan steps MUST NOT run for that source
