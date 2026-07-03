@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod cedar;
 pub mod lean;
+pub mod pan;
 pub mod registry;
 pub mod shell;
 pub mod spin;
@@ -248,11 +249,23 @@ pub struct SourceRow {
     /// summary). Not rendered when empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
-    /// Structured model-check detail. Populated by the TLA+ runner;
-    /// other verifiers omit it, so existing JSON consumers see no
-    /// change. Flows through smctl-mcp automatically.
+    /// Structured per-domain detail. Model rows carry TLC statistics,
+    /// protocol rows carry pan statistics; verifiers without deep
+    /// parsing omit it, so their JSON is unchanged. Flows through
+    /// smctl-mcp automatically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<ModelCheckDetail>,
+    pub detail: Option<VerifyDetail>,
+}
+
+/// Domain-specific structured detail on a [`SourceRow`]. Untagged:
+/// each variant serializes as its bare object, so model rows are
+/// byte-identical to the pre-protocol shape. Deserialization
+/// disambiguates on the disjoint field names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum VerifyDetail {
+    Model(ModelCheckDetail),
+    Protocol(ProtocolCheckDetail),
 }
 
 impl SourceRow {
@@ -309,6 +322,47 @@ pub enum ViolationKind {
     Assumption,
 }
 
+/// Structured result of one pan (SPIN verifier) run, parsed from the
+/// tool's output. Attached to [`SourceRow::detail`] by the protocol
+/// verb.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolCheckDetail {
+    /// States pan stored.
+    pub states_stored: u64,
+    /// States pan matched (revisited).
+    pub states_matched: u64,
+    /// Maximum search depth reached.
+    pub depth_reached: u64,
+    /// Present when pan reported a non-zero error count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub violation: Option<ProtocolViolation>,
+}
+
+/// A property violation pan reported, with its trail size.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolViolation {
+    /// Which class of failure pan reported.
+    pub kind: ProtocolViolationKind,
+    /// The violated expression or condition when pan printed one
+    /// (assertion violations do; cycles don't).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Number of steps in the replayed counter-example trail
+    /// (0 when no trail was written or replay failed).
+    pub trail_steps: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtocolViolationKind {
+    /// An `assert()` in the model failed.
+    Assertion,
+    /// An acceptance cycle exists (LTL liveness violation).
+    AcceptanceCycle,
+    /// The protocol can deadlock (invalid end state).
+    InvalidEndState,
+}
+
 impl VerifyReport {
     /// Build an empty report with the given outcome. Convenience for
     /// the `NoSources` and `ToolMissing` early-exits.
@@ -363,7 +417,7 @@ mod tests {
             source: "b.tla".into(),
             outcome: Outcome::Failed,
             note: String::new(),
-            detail: Some(ModelCheckDetail {
+            detail: Some(VerifyDetail::Model(ModelCheckDetail {
                 states_generated: 10,
                 distinct_states: 5,
                 queue_remaining: 0,
@@ -372,12 +426,50 @@ mod tests {
                     property: Some("TypeOK".into()),
                     trace_states: 3,
                 }),
-            }),
+            })),
         };
         let s = serde_json::to_string(&with_detail).unwrap();
         assert!(s.contains("\"states_generated\":10"), "{s}");
         assert!(s.contains("\"kind\":\"invariant\""), "{s}");
         assert!(s.contains("\"property\":\"TypeOK\""), "{s}");
+    }
+
+    #[test]
+    fn verify_detail_untagged_round_trips_both_variants() {
+        // Model rows: bare object, no tag or wrapper field.
+        let model = VerifyDetail::Model(ModelCheckDetail {
+            states_generated: 7,
+            distinct_states: 3,
+            queue_remaining: 0,
+            violation: None,
+        });
+        let s = serde_json::to_string(&model).unwrap();
+        assert!(s.starts_with('{') && !s.contains("Model"), "untagged: {s}");
+        assert!(matches!(
+            serde_json::from_str::<VerifyDetail>(&s).unwrap(),
+            VerifyDetail::Model(_)
+        ));
+
+        // Protocol rows: disjoint field names disambiguate.
+        let protocol = VerifyDetail::Protocol(ProtocolCheckDetail {
+            states_stored: 120,
+            states_matched: 14,
+            depth_reached: 42,
+            violation: Some(ProtocolViolation {
+                kind: ProtocolViolationKind::Assertion,
+                detail: Some("(nfull(ch))".into()),
+                trail_steps: 3,
+            }),
+        });
+        let s = serde_json::to_string(&protocol).unwrap();
+        assert!(s.contains("\"states_stored\":120"), "{s}");
+        assert!(s.contains("\"kind\":\"assertion\""), "{s}");
+        match serde_json::from_str::<VerifyDetail>(&s).unwrap() {
+            VerifyDetail::Protocol(p) => {
+                assert_eq!(p.violation.unwrap().trail_steps, 3)
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 
     #[test]

@@ -1826,3 +1826,221 @@ fn test_verify_model_jar_fallback_runs_via_java() {
     assert!(run_line.contains("-jar"), "args: {run_line}");
     assert!(run_line.ends_with("J.tla"), "args: {run_line}");
 }
+
+// --- verify protocol deep pipeline (spin-protocol-runner-v1) --------
+//
+// Fake `spin` and fake `cc` scripts (via SMCTL_VERIFY_SPIN_BIN /
+// SMCTL_VERIFY_PAN_CC) drive the full generate -> compile -> run ->
+// replay pipeline hermetically. Parser coverage lives in
+// smctl-verify/src/pan.rs.
+
+/// Write a `.smctl/workspace.toml` declaring one repo and a
+/// `[verify.protocol]` section globbing `protos/*.pml` inside it.
+fn write_protocol_workspace(dir: &Path, repo_dir: &Path) {
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.protocol]
+specs = ["protos/*.pml"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+}
+
+const FAKE_PAN_PASS: &str = r#"State-vector 44 byte, depth reached 999, errors: 0
+     8192 states, stored
+     2048 states, matched
+pan: elapsed time 0.01 seconds"#;
+
+const FAKE_PAN_ASSERT: &str = r#"pan:1: assertion violated (nfull(ch)) (at depth 42)
+pan: wrote model.pml.trail
+State-vector 36 byte, depth reached 42, errors: 1
+      120 states, stored
+       14 states, matched"#;
+
+/// Fake spin: `-a` writes pan.c; `-t` prints a canned trail replay;
+/// anything else prints a version banner.
+fn write_fake_spin(dir: &Path) -> std::path::PathBuf {
+    write_fake_tlc(
+        dir,
+        "fake-spin",
+        r#"case "$1" in
+  -a) echo "generated" > pan.c ;;
+  -t) cat <<'TRAILEOF'
+  1:	proc  0 (init:1) model.pml:12 (state 1)	[ch!msg]
+  2:	proc  1 (recv:1) model.pml:20 (state 3)	[ch?m]
+  3:	proc  0 (init:1) model.pml:13 (state 2)	[ch!msg]
+spin: trail ends after 3 steps
+TRAILEOF
+  ;;
+  *) echo "Spin Version 6.5.2 -- fake" ;;
+esac
+exit 0"#,
+    )
+}
+
+/// Fake cc: `--version` succeeds; a compile writes an executable
+/// `pan` that emits `transcript_file` and exits with `pan_exit`,
+/// optionally dropping a .trail file first.
+fn write_fake_cc(
+    dir: &Path,
+    transcript_file: &Path,
+    pan_exit: i32,
+    write_trail: bool,
+) -> std::path::PathBuf {
+    let trail_line = if write_trail {
+        "echo trail > model.pml.trail"
+    } else {
+        ":"
+    };
+    write_fake_tlc(
+        dir,
+        "fake-cc",
+        &format!(
+            r#"if [ "$1" = "--version" ]; then echo "fake-cc 1.0"; exit 0; fi
+cat > pan <<PANEOF
+#!/bin/sh
+{trail_line}
+cat {transcript}
+exit {pan_exit}
+PANEOF
+chmod +x pan
+exit 0"#,
+            transcript = transcript_file.display(),
+        ),
+    )
+}
+
+#[test]
+fn test_verify_protocol_passes_with_parsed_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("protos")).unwrap();
+    std::fs::write(repo_dir.join("protos").join("Ok.pml"), "init { skip }").unwrap();
+    write_protocol_workspace(dir.path(), &repo_dir);
+    let transcript = dir.path().join("pan-pass.txt");
+    std::fs::write(&transcript, FAKE_PAN_PASS).unwrap();
+    let spin = write_fake_spin(dir.path());
+    let cc = write_fake_cc(dir.path(), &transcript, 0, false);
+
+    smctl()
+        .env("SMCTL_VERIFY_SPIN_BIN", &spin)
+        .env("SMCTL_VERIFY_PAN_CC", &cc)
+        .args(["verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("\"states_stored\": 8192"))
+        .stdout(predicate::str::contains("\"depth_reached\": 999"));
+
+    // Artifact hygiene: nothing leaked outside the temp workdir.
+    assert!(!repo_dir.join("pan.c").exists());
+    assert!(!dir.path().join("pan.c").exists());
+}
+
+#[test]
+fn test_verify_protocol_assertion_violation_renders_trail() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("protos")).unwrap();
+    std::fs::write(
+        repo_dir.join("protos").join("Bad.pml"),
+        "init { assert(false) }",
+    )
+    .unwrap();
+    write_protocol_workspace(dir.path(), &repo_dir);
+    let transcript = dir.path().join("pan-assert.txt");
+    std::fs::write(&transcript, FAKE_PAN_ASSERT).unwrap();
+    let spin = write_fake_spin(dir.path());
+    let cc = write_fake_cc(dir.path(), &transcript, 1, true);
+
+    smctl()
+        .env("SMCTL_VERIFY_SPIN_BIN", &spin)
+        .env("SMCTL_VERIFY_PAN_CC", &cc)
+        .args(["verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("\"kind\": \"assertion\""))
+        .stdout(predicate::str::contains("nfull(ch)"))
+        .stdout(predicate::str::contains("\"trail_steps\": 3"))
+        .stdout(predicate::str::contains("Counter-example trail:"))
+        .stdout(predicate::str::contains("proc  1 (recv:1)"));
+}
+
+#[test]
+fn test_verify_protocol_missing_cc_names_cc_in_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("protos")).unwrap();
+    std::fs::write(repo_dir.join("protos").join("X.pml"), "").unwrap();
+    write_protocol_workspace(dir.path(), &repo_dir);
+    let spin = write_fake_spin(dir.path());
+
+    smctl()
+        .env("SMCTL_VERIFY_SPIN_BIN", &spin)
+        .env("SMCTL_VERIFY_PAN_CC", "/nonexistent/smctl-fake-cc")
+        .args(["verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success() // tool_missing exits 0 without --strict
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\""))
+        .stdout(predicate::str::contains("\"tool\": \"cc\""))
+        .stdout(predicate::str::contains("xcode-select --install"));
+}
+
+#[test]
+fn test_verify_protocol_spin_syntax_error_fails_at_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    std::fs::create_dir_all(repo_dir.join("protos")).unwrap();
+    std::fs::write(repo_dir.join("protos").join("Broken.pml"), "not promela").unwrap();
+    write_protocol_workspace(dir.path(), &repo_dir);
+    // A spin that never writes pan.c and prints a parse error.
+    let spin = write_fake_tlc(
+        dir.path(),
+        "fake-spin-err",
+        r#"if [ "$1" = "-a" ]; then echo "spin: Broken.pml:1, Error: syntax error" >&2; exit 1; fi
+echo "Spin Version 6.5.2 -- fake"; exit 0"#,
+    );
+    let cc_marker = dir.path().join("cc-was-called.txt");
+    let cc = write_fake_tlc(
+        dir.path(),
+        "fake-cc-marker",
+        &format!(
+            r#"if [ "$1" = "--version" ]; then exit 0; fi
+echo called >> {}
+exit 0"#,
+            cc_marker.display()
+        ),
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_SPIN_BIN", &spin)
+        .env("SMCTL_VERIFY_PAN_CC", &cc)
+        .args(["verify", "protocol", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("syntax error"));
+
+    assert!(
+        !cc_marker.exists(),
+        "compile step must not run after a spin generation failure"
+    );
+}

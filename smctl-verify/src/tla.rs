@@ -10,11 +10,11 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::shell::output_head;
+use crate::shell::{absolutize, anchor_override, output_head, sh_quote};
 use crate::tlc::{self, TlcVerdict};
 use crate::{
-    DiscoveryResult, Outcome, SourceRow, Verifier, VerifyContext, VerifyManifest, VerifyReport,
-    Violation,
+    DiscoveryResult, Outcome, SourceRow, Verifier, VerifyContext, VerifyDetail, VerifyManifest,
+    VerifyReport, Violation,
 };
 
 /// Overrides the TLC binary wholesale. Test-and-escape-hatch only.
@@ -56,16 +56,6 @@ impl Launcher {
     }
 }
 
-/// Single-quote a path for a copy-pasteable reproduce hint when it
-/// contains whitespace.
-fn sh_quote(s: &str) -> String {
-    if s.chars().any(char::is_whitespace) {
-        format!("'{}'", s.replace('\'', r"'\''"))
-    } else {
-        s.to_string()
-    }
-}
-
 /// Single spawn probe: `Some(first banner line)` when the binary
 /// spawns, `None` when it doesn't. One process launch covers both
 /// the existence check and the version string.
@@ -82,19 +72,6 @@ fn probe(binary: &str, args: &[&str]) -> Option<String> {
     })
 }
 
-/// Anchor a relative path to the current working directory. TLC runs
-/// with `current_dir` = the spec's directory, and on Unix a relative
-/// program or jar path would otherwise resolve against that child
-/// cwd — not the cwd the operator typed it in (see
-/// `Command::current_dir` platform-specific behavior).
-fn absolutize(p: PathBuf) -> PathBuf {
-    if p.is_absolute() {
-        return p;
-    }
-    let anchored = std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p);
-    anchored.canonicalize().unwrap_or(anchored)
-}
-
 /// Resolve a TLC launcher. Chain: env override → PATH `tlc` →
 /// `[verify.model] jar` (relative to the workspace root) →
 /// `TLA2TOOLS_JAR` — the jar paths require a working `java`.
@@ -107,14 +84,7 @@ fn resolve_launcher(
     if let Ok(bin) = std::env::var(ENV_TLC_BIN)
         && !bin.trim().is_empty()
     {
-        // A bare name resolves via PATH regardless of the child cwd;
-        // anything with a separator must be anchored before TLC runs
-        // with current_dir = the spec's directory.
-        let bin = if bin.contains(std::path::MAIN_SEPARATOR) || bin.contains('/') {
-            absolutize(PathBuf::from(&bin)).display().to_string()
-        } else {
-            bin
-        };
+        let bin = anchor_override(bin);
         if let Some(version) = probe(&bin, &["-h"]) {
             return Some((Launcher::Direct(bin), version));
         }
@@ -183,6 +153,11 @@ impl Verifier for TlaVerifier {
     }
 
     fn run(&self, ctx: &VerifyContext) -> VerifyReport {
+        // An unconfigured workspace reports `no sources configured`
+        // without probing tools (parity with the protocol verb).
+        if ctx.manifest.sources.is_empty() {
+            return VerifyReport::empty("model", Outcome::NoSources);
+        }
         // A relative workspace root (e.g. `-w .`) must be anchored
         // before it can anchor the configured jar path.
         let workspace_root = absolutize(ctx.workspace_root.clone());
@@ -353,7 +328,7 @@ fn run_model_source(
                     source: source_display,
                     outcome: Outcome::Passed,
                     note,
-                    detail: analysis.stats,
+                    detail: analysis.stats.map(VerifyDetail::Model),
                 },
                 None,
             )
@@ -393,10 +368,10 @@ fn run_model_source(
                     });
                     (
                         format!(" Exit code {exit_str} means {}.", exit_kind_phrase(kind)),
-                        Some(d),
+                        Some(VerifyDetail::Model(d)),
                     )
                 }
-                None => (String::new(), analysis.stats),
+                None => (String::new(), analysis.stats.map(VerifyDetail::Model)),
             };
             (
                 SourceRow {
@@ -459,6 +434,6 @@ fn violation_row(
         source: source_display,
         outcome: Outcome::Failed,
         note,
-        detail: Some(detail),
+        detail: Some(VerifyDetail::Model(detail)),
     }
 }
