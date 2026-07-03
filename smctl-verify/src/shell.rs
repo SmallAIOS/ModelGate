@@ -167,6 +167,16 @@ pub fn run_against_sources(shell: &Shell<'_>, ctx: &VerifyContext) -> VerifyRepo
     walk_sources(shell.name, ctx, &|path| run_one_source(shell, path))
 }
 
+/// Single-quote a path for a copy-pasteable reproduce hint when it
+/// contains whitespace.
+pub fn sh_quote(s: &str) -> String {
+    if s.chars().any(char::is_whitespace) {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    } else {
+        s.to_string()
+    }
+}
+
 /// First lines of captured tool output, for folding into a failure
 /// note without flooding the report. stderr is preferred (most tools
 /// put the actionable error there), falling back to stdout.

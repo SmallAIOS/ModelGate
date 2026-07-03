@@ -2427,15 +2427,24 @@ async fn run(cli: Cli) -> Result<i32> {
                             // top-level error/tool fields plus the
                             // install hint, mirroring the smctl
                             // quality command family.
-                            let (tool, install_hint) = match verifier.discover() {
-                                smctl_verify::DiscoveryResult::NotInstalled {
-                                    tool,
-                                    install_hint,
-                                } => (tool, install_hint),
-                                smctl_verify::DiscoveryResult::Found { path, .. } => (
-                                    path,
-                                    report.diagnostics.first().cloned().unwrap_or_default(),
-                                ),
+                            // The protocol verb needs two tools (spin
+                            // plus a C compiler for pan); its helper
+                            // names whichever is actually absent.
+                            let protocol_missing = (report.verifier == "protocol")
+                                .then(smctl_verify::spin::missing_tool_for_protocol)
+                                .flatten();
+                            let (tool, install_hint) = match protocol_missing {
+                                Some(pair) => pair,
+                                None => match verifier.discover() {
+                                    smctl_verify::DiscoveryResult::NotInstalled {
+                                        tool,
+                                        install_hint,
+                                    } => (tool, install_hint),
+                                    smctl_verify::DiscoveryResult::Found { path, .. } => (
+                                        path,
+                                        report.diagnostics.first().cloned().unwrap_or_default(),
+                                    ),
+                                },
                             };
                             println!(
                                 "{}",

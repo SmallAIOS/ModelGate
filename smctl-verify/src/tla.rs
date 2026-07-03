@@ -10,11 +10,11 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::shell::output_head;
+use crate::shell::{output_head, sh_quote};
 use crate::tlc::{self, TlcVerdict};
 use crate::{
-    DiscoveryResult, Outcome, SourceRow, Verifier, VerifyContext, VerifyManifest, VerifyReport,
-    Violation,
+    DiscoveryResult, Outcome, SourceRow, Verifier, VerifyContext, VerifyDetail, VerifyManifest,
+    VerifyReport, Violation,
 };
 
 /// Overrides the TLC binary wholesale. Test-and-escape-hatch only.
@@ -53,16 +53,6 @@ impl Launcher {
                 format!("java -jar {}", sh_quote(&jar.display().to_string()))
             }
         }
-    }
-}
-
-/// Single-quote a path for a copy-pasteable reproduce hint when it
-/// contains whitespace.
-fn sh_quote(s: &str) -> String {
-    if s.chars().any(char::is_whitespace) {
-        format!("'{}'", s.replace('\'', r"'\''"))
-    } else {
-        s.to_string()
     }
 }
 
@@ -353,7 +343,7 @@ fn run_model_source(
                     source: source_display,
                     outcome: Outcome::Passed,
                     note,
-                    detail: analysis.stats,
+                    detail: analysis.stats.map(VerifyDetail::Model),
                 },
                 None,
             )
@@ -393,10 +383,10 @@ fn run_model_source(
                     });
                     (
                         format!(" Exit code {exit_str} means {}.", exit_kind_phrase(kind)),
-                        Some(d),
+                        Some(VerifyDetail::Model(d)),
                     )
                 }
-                None => (String::new(), analysis.stats),
+                None => (String::new(), analysis.stats.map(VerifyDetail::Model)),
             };
             (
                 SourceRow {
@@ -459,6 +449,6 @@ fn violation_row(
         source: source_display,
         outcome: Outcome::Failed,
         note,
-        detail: Some(detail),
+        detail: Some(VerifyDetail::Model(detail)),
     }
 }
