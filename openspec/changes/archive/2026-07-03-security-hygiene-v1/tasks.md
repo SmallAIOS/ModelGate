@@ -21,8 +21,8 @@
 
 ## 4. Committed scaffolding and agent guidance
 
-- [ ] 4.1 Stage and commit the OpenSpec 1.5.0 scaffolding: `openspec/config.yaml`, `.claude/skills/openspec-*/`, `.claude/commands/opsx/`
-- [ ] 4.2 Regenerate `AGENTS.md` from `CLAUDE.md`: generic AI-agent preamble, design-skill pointer to `.agents/skills/smallaios-design/SKILL.md`, drift note naming `CLAUDE.md` as source of truth; commit alongside `.agents/`
+- [x] 4.1 Stage and commit the OpenSpec 1.5.0 scaffolding: `openspec/config.yaml`, `.claude/skills/openspec-*/`, `.claude/commands/opsx/`
+- [x] 4.2 Regenerate `AGENTS.md` from `CLAUDE.md`: generic AI-agent preamble, design-skill pointer to `.agents/skills/smallaios-design/SKILL.md`, drift note naming `CLAUDE.md` as source of truth; commit alongside `.agents/`
 - [x] 4.3 Confirm `AGENTS.md` contains no `.Codex/` or `Codex.ai` references
 
 ## 5. Validation and PR
@@ -30,7 +30,7 @@
 - [x] 5.1 `openspec validate --all --strict` passes with the new change and delta spec
 - [x] 5.2 `cargo build --workspace` and `cargo test --workspace` pass (no Rust surface changed, but gate anyway)
 - [x] 5.3 Verify repo settings still read enabled: `gh api repos/SmallAIOS/ModelGate --jq .security_and_analysis` shows secret scanning, push protection, and Dependabot security updates on
-- [ ] 5.4 Open PR from `change/security-hygiene-v1` into `develop`; confirm the Security Audit job appears and the CI Gate goes green
+- [x] 5.4 Open PR from `change/security-hygiene-v1` into `develop`; confirm the Security Audit job appears and the CI Gate goes green — PR #30, all 11 checks passed, squash-merged 2026-07-03
 
 ## 6. Toolchain currency
 
