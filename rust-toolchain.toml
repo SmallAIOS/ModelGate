@@ -1,0 +1,6 @@
+# Pin ModelGate to the stable channel. The machine-wide rustup default is a
+# nightly (needed for SmallAIOS kernel work); without this pin that nightly
+# silently builds this workspace, diverging from CI's dtolnay/rust-toolchain@stable.
+# Ferrocene parity rule: this stays a stock stable toolchain; Ferrocene is opt-in.
+[toolchain]
+channel = "stable"
