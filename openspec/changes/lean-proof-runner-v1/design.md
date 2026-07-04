@@ -45,6 +45,8 @@ Toolchain reality: `lean --json` (available since Lean 4.8) emits one JSON messa
 
 **D9 — Row expansion lives in `lean.rs`, not `shell.rs`.** `walk_sources`' contract is one row per glob match (`&dyn Fn(&Path) -> SourceRow`); loose-tree roots need one row per file discovered *under* a match. The Lean runner implements its own walk (same repo-iteration and glob semantics, flat-mapping directory matches into per-file rows) rather than changing the shared closure signature under the other three verifiers. `shell.rs` keeps `anchor_override`, `sh_quote`, and `output_head` reuse.
 
+**D10 — Fail closed on everything the walk cannot vouch for** *(added after adversarial review)*. Five review findings shared one root cause: paths where the runner could stay silent while proofs went unchecked. All now fail loudly: (a) a mixed corpus with one tool absent runs the checkable targets and fails each unverifiable row naming the missing tool — whole-run `tool_missing` only when nothing can be checked; (b) unreadable directories push a fatal diagnostic instead of being skipped; (c) a root that classifies to nothing checkable (corpus moved, only hidden files) fails the run; (d) nested Lake packages inside loose trees become `lake build` targets rather than mis-checked bare files, and direct file matches inside a package resolve to the enclosing package (deduplicated); (e) lake's closing `error: build failed` meta line is excluded from message parsing, and position-less error lines classify as `build` (environmental) rather than `error` (proof evidence), so SMCTL-0505 fires only on real proof errors. A canonical-path visited set guards symlink cycles in the loose walk. The non-UTF-8 pattern skip stays non-fatal, matching `shell::walk_sources`. As a drive-by from the same hazard class, `spin::cc_available` now requires probe exit success, which its own doc comment already claimed.
+
 ## Risks / Trade-offs
 
 - [Lake text-log format drifts across versions] → parse leniently (message-line regex only), keep the exit code as ground truth, and fall back to SMCTL-0506 with an `output_head` excerpt when nothing matches.
@@ -61,4 +63,4 @@ Purely additive: no `workspace.toml` change, JSON detail is `skip_serializing_if
 
 ## Open Questions
 
-None blocking. `#print axioms` auditing and a timeout knob are explicitly deferred (see Non-Goals).
+None blocking. `#print axioms` auditing and a timeout knob are explicitly deferred (see Non-Goals). One review finding is deferred to a follow-up rather than fixed here: `shell::discover_binary` still treats any successful spawn as Found (the spawn-only hazard fixed for lean and cc), because tightening it changes TLC discovery behavior (`tlc -h` exit codes vary across wrapper scripts) and deserves its own validated change.

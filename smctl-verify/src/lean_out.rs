@@ -116,6 +116,14 @@ fn parse_lake_line(line: &str) -> Option<LeanMessage> {
         return None;
     };
 
+    // Lake's closing meta line (`error: build failed` on stderr)
+    // restates that some target failed; counting it as a message
+    // would inflate the error count and misclassify environmental
+    // failures as proof errors.
+    if rest.trim() == "build failed" {
+        return None;
+    }
+
     // Try `{file}:{line}:{col}: {msg}`; fall back to a bare message.
     let mut parts = rest.splitn(4, ':');
     if let (Some(file), Some(l), Some(c), Some(msg)) =
@@ -140,9 +148,11 @@ fn parse_lake_line(line: &str) -> Option<LeanMessage> {
     })
 }
 
-/// Fold a message stream into the structured proof detail. The
-/// failure is the first error, or — when no errors exist — the first
-/// sorry marker.
+/// Fold a message stream into the structured proof detail. Failure
+/// precedence: the first positioned error (a proof error pointing at
+/// a declaration), else the first sorry marker, else the first
+/// position-less error (environment-level: lakefile, dependency,
+/// toolchain — classified `build`, not `error`).
 pub fn summarize(messages: &[LeanMessage]) -> ProofCheckDetail {
     let errors = messages
         .iter()
@@ -156,7 +166,7 @@ pub fn summarize(messages: &[LeanMessage]) -> ProofCheckDetail {
 
     let failure = messages
         .iter()
-        .find(|m| m.severity == LeanSeverity::Error)
+        .find(|m| m.severity == LeanSeverity::Error && m.location().is_some())
         .map(|m| ProofFailure {
             kind: ProofFailureKind::Error,
             location: m.location(),
@@ -168,6 +178,16 @@ pub fn summarize(messages: &[LeanMessage]) -> ProofCheckDetail {
                 location: m.location(),
                 message: m.headline(),
             })
+        })
+        .or_else(|| {
+            messages
+                .iter()
+                .find(|m| m.severity == LeanSeverity::Error)
+                .map(|m| ProofFailure {
+                    kind: ProofFailureKind::Build,
+                    location: None,
+                    message: m.headline(),
+                })
         });
 
     ProofCheckDetail {
@@ -264,13 +284,27 @@ Some required targets logged failures:
 error: build failed
 ";
         let msgs = parse_lake_log(log);
-        assert_eq!(msgs.len(), 3);
+        // The closing `error: build failed` meta line is skipped: it
+        // restates the replayed failure and must not inflate counts.
+        assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].severity, LeanSeverity::Error);
         assert_eq!(msgs[0].location().as_deref(), Some("Proofs/Bad.lean:12:4"));
         assert!(is_sorry(&msgs[1]));
-        // `error: build failed` has no position: bare message.
-        assert_eq!(msgs[2].pos, None);
-        assert_eq!(msgs[2].data, "build failed");
+    }
+
+    #[test]
+    fn lake_meta_only_failure_classifies_as_build() {
+        // A lakefile-level failure replays no compiler message; only
+        // position-less error lines appear.
+        let log = "error: no lakefile.lean or lakefile.toml found\nerror: build failed\n";
+        let msgs = parse_lake_log(log);
+        assert_eq!(msgs.len(), 1);
+        let d = summarize(&msgs);
+        assert_eq!(d.errors, 1);
+        let f = d.failure.unwrap();
+        assert_eq!(f.kind, ProofFailureKind::Build);
+        assert_eq!(f.location, None);
+        assert!(f.message.contains("no lakefile"), "{}", f.message);
     }
 
     #[test]

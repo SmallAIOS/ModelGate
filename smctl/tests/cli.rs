@@ -2457,3 +2457,51 @@ exit 1"#,
         Some("failed")
     );
 }
+
+#[test]
+fn test_verify_proof_mixed_corpus_fails_unverifiable_rows_when_lake_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Loose.lean"), "theorem t : True := trivial\n").unwrap();
+    std::fs::create_dir(proofs.join("pkg")).unwrap();
+    std::fs::write(proofs.join("pkg/lakefile.toml"), "name = \"pkg\"\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(dir.path(), "fake-lean-mixed", "exit 0");
+
+    // lean present, lake absent: the loose proof must still be
+    // checked; the package row fails naming lake — never a silent
+    // whole-run tool_missing skip.
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .env("SMCTL_VERIFY_LAKE_BIN", "/nonexistent/smctl-fake-lake")
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("Loose.lean"))
+        .stdout(predicate::str::contains("lake is not installed, so"))
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\"").not());
+}
+
+#[test]
+fn test_verify_proof_empty_root_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("README.md"), "corpus moved\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(dir.path(), "fake-lean-empty", "exit 0");
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("no .lean sources found"));
+}

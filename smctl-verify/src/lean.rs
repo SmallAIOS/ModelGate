@@ -95,35 +95,52 @@ impl Verifier for LeanVerifier {
         }
 
         let mut report = VerifyReport::empty("proof", Outcome::NoSources);
-        let targets = collect_targets(ctx, &mut report.diagnostics);
-        let glob_failed = !report.diagnostics.is_empty();
-        if targets.is_empty() {
-            if glob_failed {
+        let collection = collect_targets(ctx);
+        report.diagnostics = collection.diagnostics;
+        if collection.targets.is_empty() {
+            if collection.fatal {
                 report.outcome = Outcome::Failed;
             }
             return report;
         }
 
-        let needs_lean = targets
+        let needs_lean = collection
+            .targets
             .iter()
             .any(|t| matches!(t, Target::LooseFile { .. }));
-        let needs_lake = targets
+        let needs_lake = collection
+            .targets
             .iter()
             .any(|t| matches!(t, Target::LakePackage { .. }));
         let lean_bin = resolve_tool(ENV_LEAN_BIN, "lean");
         let lake_bin = resolve_tool(ENV_LAKE_BIN, "lake");
-        if let Some((tool, hint)) = missing_tool(needs_lean, needs_lake, &lean_bin, &lake_bin) {
-            let mut missing = VerifyReport::empty("proof", Outcome::ToolMissing);
-            missing
+        let lean_missing = needs_lean && probe(&lean_bin).is_none();
+        let lake_missing = needs_lake && probe(&lake_bin).is_none();
+
+        // Whole-run tool_missing only when NO configured target can
+        // be checked. A mixed corpus with one tool present still runs
+        // what it can and fails the unverifiable rows — never a
+        // silent skip: an unverifiable proof is not a verified proof.
+        let nothing_checkable = (!needs_lean || lean_missing) && (!needs_lake || lake_missing);
+        if (lean_missing || lake_missing) && nothing_checkable {
+            report.outcome = Outcome::ToolMissing;
+            let tool = if lean_missing { "lean" } else { "lake" };
+            report
                 .diagnostics
-                .push(format!("{tool} is not installed on PATH. {hint}"));
-            return missing;
+                .push(format!("{tool} is not installed on PATH. {INSTALL_HINT}"));
+            return report;
         }
 
-        let mut any_failed = glob_failed;
+        let mut any_failed = collection.fatal;
         let mut excerpts: Vec<String> = Vec::new();
-        for target in &targets {
+        for target in &collection.targets {
             let (row, excerpt) = match target {
+                Target::LooseFile { file, .. } if lean_missing => {
+                    (unverifiable_row(&file.display().to_string(), "lean"), None)
+                }
+                Target::LakePackage { root } if lake_missing => {
+                    (unverifiable_row(&root.display().to_string(), "lake"), None)
+                }
                 Target::LooseFile { root, file } => run_loose_file(&lean_bin, root, file),
                 Target::LakePackage { root } => run_lake_package(&lake_bin, root),
             };
@@ -146,43 +163,45 @@ impl Verifier for LeanVerifier {
     }
 }
 
+/// Row for a target whose tool is absent while another tool's targets
+/// still run: fail closed rather than skip.
+fn unverifiable_row(display: &str, tool: &str) -> SourceRow {
+    SourceRow::plain(
+        display.to_string(),
+        Outcome::Failed,
+        format!(
+            "{tool} is not installed, so {display} was not checked. An unverifiable proof is not a verified proof. {INSTALL_HINT}, then re-run `smctl verify proof`."
+        ),
+    )
+}
+
 /// Which tool the missing-tool envelope should name for the proof
 /// verb right now: classification decides whether `lean` (loose-file
 /// trees) or `lake` (Lake packages) is actually required. The CLI
 /// consults this instead of `discover()` when building the
 /// `tool_missing` envelope, mirroring `spin::missing_tool_for_protocol`.
 pub fn missing_tool_for_proof(ctx: &VerifyContext) -> Option<(String, String)> {
-    let mut sink = Vec::new();
-    let targets = collect_targets(ctx, &mut sink);
-    let needs_lean = targets.is_empty()
-        || targets
+    let collection = collect_targets(ctx);
+    let needs_lean = collection.targets.is_empty()
+        || collection
+            .targets
             .iter()
             .any(|t| matches!(t, Target::LooseFile { .. }));
-    let needs_lake = targets
+    let needs_lake = collection
+        .targets
         .iter()
         .any(|t| matches!(t, Target::LakePackage { .. }));
-    let lean_bin = resolve_tool(ENV_LEAN_BIN, "lean");
-    let lake_bin = resolve_tool(ENV_LAKE_BIN, "lake");
-    missing_tool(needs_lean, needs_lake, &lean_bin, &lake_bin)
-}
-
-fn missing_tool(
-    needs_lean: bool,
-    needs_lake: bool,
-    lean_bin: &str,
-    lake_bin: &str,
-) -> Option<(String, String)> {
-    if needs_lean && probe(lean_bin).is_none() {
+    if needs_lean && probe(&resolve_tool(ENV_LEAN_BIN, "lean")).is_none() {
         return Some(("lean".to_string(), INSTALL_HINT.to_string()));
     }
-    if needs_lake && probe(lake_bin).is_none() {
+    if needs_lake && probe(&resolve_tool(ENV_LAKE_BIN, "lake")).is_none() {
         return Some(("lake".to_string(), INSTALL_HINT.to_string()));
     }
     None
 }
 
 /// One unit of proof-checking work after root classification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Target {
     /// A single `.lean` file checked with `lean --json`, cwd `root`.
     LooseFile { root: PathBuf, file: PathBuf },
@@ -190,20 +209,37 @@ enum Target {
     LakePackage { root: PathBuf },
 }
 
+/// Classified targets plus everything the walk had to say about them.
+#[derive(Debug, Default)]
+struct Collection {
+    targets: Vec<Target>,
+    diagnostics: Vec<String>,
+    /// Whether any diagnostic is fatal (invalid pattern, unreadable
+    /// directory, unusable or empty root). The non-UTF-8 pattern skip
+    /// is recorded without failing the run, matching
+    /// `shell::walk_sources`.
+    fatal: bool,
+}
+
+fn has_lakefile(dir: &Path) -> bool {
+    dir.join("lakefile.lean").is_file() || dir.join("lakefile.toml").is_file()
+}
+
 /// Expand the manifest's roots across every registered repo into
-/// classified targets. Mirrors `shell::walk_sources`' glob semantics
-/// (including its diagnostics for bad patterns) but flat-maps
-/// directory matches: a Lake package is one target, a loose tree one
-/// target per discovered `.lean` file.
-fn collect_targets(ctx: &VerifyContext, diagnostics: &mut Vec<String>) -> Vec<Target> {
-    let mut targets = Vec::new();
+/// classified, deduplicated targets. Mirrors `shell::walk_sources`'
+/// glob semantics (including its diagnostics for bad patterns) but
+/// flat-maps directory matches: a Lake package is one target, a
+/// loose tree one target per discovered `.lean` file.
+fn collect_targets(ctx: &VerifyContext) -> Collection {
+    let mut c = Collection::default();
+    let mut seen: std::collections::HashSet<Target> = std::collections::HashSet::new();
     for (repo_name, repo_path) in &ctx.repos {
         for pattern in &ctx.manifest.sources {
             let absolute = repo_path.join(pattern);
             let glob_pattern = match absolute.to_str() {
                 Some(s) => s.to_string(),
                 None => {
-                    diagnostics.push(format!(
+                    c.diagnostics.push(format!(
                         "skipped non-utf8 glob pattern under repo {repo_name}: {pattern}",
                     ));
                     continue;
@@ -212,9 +248,10 @@ fn collect_targets(ctx: &VerifyContext, diagnostics: &mut Vec<String>) -> Vec<Ta
             let entries = match glob::glob(&glob_pattern) {
                 Ok(it) => it,
                 Err(e) => {
-                    diagnostics.push(format!(
+                    c.diagnostics.push(format!(
                         "invalid glob '{pattern}' under repo {repo_name}: {e}. Fix the pattern in [verify.proof].roots and re-run.",
                     ));
+                    c.fatal = true;
                     continue;
                 }
             };
@@ -222,63 +259,152 @@ fn collect_targets(ctx: &VerifyContext, diagnostics: &mut Vec<String>) -> Vec<Ta
                 let path = match entry {
                     Ok(p) => p,
                     Err(e) => {
-                        diagnostics
+                        c.diagnostics
                             .push(format!("could not read entry under repo {repo_name}: {e}.",));
+                        c.fatal = true;
                         continue;
                     }
                 };
-                classify(&path, &mut targets);
+                classify(&path, repo_path, &mut c, &mut seen);
             }
         }
     }
-    targets
+    c
 }
 
-fn classify(path: &Path, targets: &mut Vec<Target>) {
+fn classify(
+    path: &Path,
+    repo_root: &Path,
+    c: &mut Collection,
+    seen: &mut std::collections::HashSet<Target>,
+) {
     if path.is_dir() {
-        if path.join("lakefile.lean").is_file() || path.join("lakefile.toml").is_file() {
-            targets.push(Target::LakePackage {
-                root: path.to_path_buf(),
-            });
+        if has_lakefile(path) {
+            push_unique(
+                c,
+                seen,
+                Target::LakePackage {
+                    root: path.to_path_buf(),
+                },
+            );
             return;
         }
-        let mut files = Vec::new();
-        collect_lean_files(path, &mut files);
-        files.sort();
-        targets.extend(files.into_iter().map(|file| Target::LooseFile {
-            root: path.to_path_buf(),
-            file,
-        }));
+        let targets_before = c.targets.len();
+        let fatal_before = c.fatal;
+        let mut visited = std::collections::HashSet::new();
+        collect_loose(path, path, c, seen, &mut visited);
+        if c.targets.len() == targets_before && c.fatal == fatal_before {
+            // A root that classifies to nothing must fail loudly: the
+            // old exit-code wrapper would at least have run the tool
+            // here, so exiting 0 would be a silent false pass.
+            c.diagnostics.push(format!(
+                "no .lean sources found under {p}. The configured [verify.proof] root exists but has nothing to check, so nothing was verified. Point roots at .lean files or a Lake package, then re-run `smctl verify proof`.",
+                p = path.display()
+            ));
+            c.fatal = true;
+        }
         return;
     }
-    // A glob that matches files directly yields loose rows as-is; the
-    // operator's pattern is authoritative.
     if path.is_file() {
+        // A file inside a Lake package belongs to the package: bare
+        // `lean --json` cannot resolve the package's imports, so
+        // check the enclosing package once with lake instead.
+        if let Some(pkg) = enclosing_package(path, repo_root) {
+            push_unique(c, seen, Target::LakePackage { root: pkg });
+            return;
+        }
         let root = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        targets.push(Target::LooseFile {
-            root,
-            file: path.to_path_buf(),
-        });
+        push_unique(
+            c,
+            seen,
+            Target::LooseFile {
+                root,
+                file: path.to_path_buf(),
+            },
+        );
+        return;
     }
+    c.diagnostics.push(format!(
+        "could not classify {p}: neither a file nor a directory (broken symlink?). Fix the entry or the [verify.proof].roots pattern, then re-run `smctl verify proof`.",
+        p = path.display()
+    ));
+    c.fatal = true;
 }
 
-/// Recursively gather `.lean` files, skipping hidden entries — which
-/// also covers Lake's `.lake/` build directory.
-fn collect_lean_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+/// Nearest ancestor of `file` (up to and including `stop`) that is a
+/// Lake package root.
+fn enclosing_package(file: &Path, stop: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent();
+    while let Some(d) = dir {
+        if has_lakefile(d) {
+            return Some(d.to_path_buf());
+        }
+        if d == stop {
+            break;
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// Walk a loose tree: hidden entries are skipped (which covers
+/// Lake's `.lake/` build directory), nested Lake packages become
+/// package targets instead of loose files, unreadable directories
+/// fail the run with a diagnostic, and a visited set of canonical
+/// paths guards against symlink cycles.
+fn collect_loose(
+    dir: &Path,
+    loose_root: &Path,
+    c: &mut Collection,
+    seen: &mut std::collections::HashSet<Target>,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) {
+    let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canon) {
         return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            c.diagnostics.push(format!(
+                "could not read directory {d}: {e}. Proofs under it were not checked, so this run cannot be trusted as complete. Fix the permissions or the [verify.proof].roots pattern, then re-run `smctl verify proof`.",
+                d = dir.display()
+            ));
+            c.fatal = true;
+            return;
+        }
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with('.') {
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        let hidden = path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+        if hidden {
             continue;
         }
         if path.is_dir() {
-            collect_lean_files(&path, out);
+            if has_lakefile(&path) {
+                push_unique(c, seen, Target::LakePackage { root: path });
+            } else {
+                collect_loose(&path, loose_root, c, seen, visited);
+            }
         } else if path.extension().is_some_and(|x| x == "lean") {
-            out.push(path);
+            push_unique(
+                c,
+                seen,
+                Target::LooseFile {
+                    root: loose_root.to_path_buf(),
+                    file: path,
+                },
+            );
         }
+    }
+}
+
+fn push_unique(c: &mut Collection, seen: &mut std::collections::HashSet<Target>, t: Target) {
+    if seen.insert(t.clone()) {
+        c.targets.push(t);
     }
 }
 
@@ -438,6 +564,17 @@ fn finish_row(
                 .map(|m| lean_out::render_message_excerpt(&source_display, m, reproduce));
             (failed_row(source_display, note, detail), excerpt)
         }
+        Some(f) if f.kind == ProofFailureKind::Build => {
+            // A parsed, environment-level failure (lakefile error,
+            // missing dependency, toolchain fault). Not proof
+            // evidence — no per-row MSGID; the run-level SMCTL-0503
+            // covers it.
+            let note = format!(
+                "{tool} could not build {source_display}: {msg}. The failure is environmental, not a proof error. Re-run `{reproduce}` to inspect the full output.",
+                msg = f.message,
+            );
+            (failed_row(source_display, note, detail), None)
+        }
         _ if exit_ok => {
             let note = if detail.warnings > 0 {
                 format!("{} warning(s)", detail.warnings)
@@ -509,21 +646,28 @@ mod tests {
         std::fs::write(path, "-- lean source\n").unwrap();
     }
 
+    fn classify_one(path: &Path, repo_root: &Path) -> Collection {
+        let mut c = Collection::default();
+        let mut seen = std::collections::HashSet::new();
+        classify(path, repo_root, &mut c, &mut seen);
+        c
+    }
+
     #[test]
     fn classify_detects_lake_package_by_lakefile() {
         for lakefile in ["lakefile.lean", "lakefile.toml"] {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join(lakefile), "").unwrap();
             touch(&dir.path().join("Main.lean"));
-            let mut targets = Vec::new();
-            classify(dir.path(), &mut targets);
+            let c = classify_one(dir.path(), dir.path());
             assert_eq!(
-                targets,
+                c.targets,
                 vec![Target::LakePackage {
                     root: dir.path().to_path_buf()
                 }],
                 "{lakefile} must mark a Lake package"
             );
+            assert!(!c.fatal);
         }
     }
 
@@ -538,9 +682,9 @@ mod tests {
         std::fs::create_dir(dir.path().join(".lake")).unwrap();
         touch(&dir.path().join(".lake/Decoy.lean"));
 
-        let mut targets = Vec::new();
-        classify(dir.path(), &mut targets);
-        let files: Vec<String> = targets
+        let c = classify_one(dir.path(), dir.path());
+        let files: Vec<String> = c
+            .targets
             .iter()
             .map(|t| match t {
                 Target::LooseFile { file, .. } => {
@@ -553,19 +697,130 @@ mod tests {
     }
 
     #[test]
+    fn classify_treats_nested_package_as_lake_target() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Loose.lean"));
+        std::fs::create_dir(dir.path().join("pkg")).unwrap();
+        std::fs::write(dir.path().join("pkg/lakefile.toml"), "").unwrap();
+        touch(&dir.path().join("pkg/Dep.lean"));
+
+        let c = classify_one(dir.path(), dir.path());
+        assert_eq!(
+            c.targets,
+            vec![
+                Target::LooseFile {
+                    root: dir.path().to_path_buf(),
+                    file: dir.path().join("Loose.lean")
+                },
+                Target::LakePackage {
+                    root: dir.path().join("pkg")
+                },
+            ],
+            "package sources must not be checked as bare loose files"
+        );
+    }
+
+    #[test]
+    fn classify_resolves_direct_file_match_to_enclosing_package() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lakefile.lean"), "").unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        let f = dir.path().join("src/Inside.lean");
+        touch(&f);
+        let c = classify_one(&f, dir.path());
+        assert_eq!(
+            c.targets,
+            vec![Target::LakePackage {
+                root: dir.path().to_path_buf()
+            }],
+            "a file inside a package must resolve to the package"
+        );
+    }
+
+    #[test]
     fn classify_passes_direct_file_matches_through() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("Single.lean");
         touch(&f);
-        let mut targets = Vec::new();
-        classify(&f, &mut targets);
+        let c = classify_one(&f, dir.path());
         assert_eq!(
-            targets,
+            c.targets,
             vec![Target::LooseFile {
                 root: dir.path().to_path_buf(),
                 file: f
             }]
         );
+    }
+
+    #[test]
+    fn classify_fails_empty_loose_root_loudly() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "moved elsewhere").unwrap();
+        let c = classify_one(dir.path(), dir.path());
+        assert!(c.targets.is_empty());
+        assert!(c.fatal, "an empty root must fail the run, not pass it");
+        assert!(
+            c.diagnostics
+                .iter()
+                .any(|d| d.contains("no .lean sources found")),
+            "{:?}",
+            c.diagnostics
+        );
+    }
+
+    #[test]
+    fn classify_dedupes_overlapping_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("Once.lean");
+        touch(&f);
+        let mut c = Collection::default();
+        let mut seen = std::collections::HashSet::new();
+        classify(&f, dir.path(), &mut c, &mut seen);
+        classify(&f, dir.path(), &mut c, &mut seen);
+        classify(dir.path(), dir.path(), &mut c, &mut seen);
+        assert_eq!(c.targets.len(), 1, "{:?}", c.targets);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_reports_unreadable_subtree_and_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Ok.lean"));
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        touch(&locked.join("Hidden.lean"));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let c = classify_one(dir.path(), dir.path());
+
+        // Restore so tempdir cleanup can proceed.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        if c.diagnostics.is_empty() {
+            // Running as root: the directory stays readable and the
+            // permission scenario cannot be produced.
+            return;
+        }
+        assert!(c.fatal, "unreadable subtree must fail the run");
+        assert!(
+            c.diagnostics
+                .iter()
+                .any(|d| d.contains("could not read directory")),
+            "{:?}",
+            c.diagnostics
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_loose_survives_symlink_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(&dir.path().join("Real.lean"));
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("loop")).unwrap();
+
+        let c = classify_one(dir.path(), dir.path());
+        assert_eq!(c.targets.len(), 1, "{:?}", c.targets);
     }
 
     #[test]
