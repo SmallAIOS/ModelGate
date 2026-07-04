@@ -1,12 +1,14 @@
 //! Shared shell-out helpers for the TLA+ / Lean 4 / SPIN verifiers.
 //!
-//! The Lean and SPIN wrappers remain exit-code level per
-//! `formal-methods-v1`'s Out-of-Scope clause; deep output parsing for
-//! them belongs in `lean-proof-runner-v1` / `spin-protocol-runner-v1`.
-//! The TLA+ runner drives [`walk_sources`] with its own per-source
-//! closure (see `tla.rs`). Child stdout/stderr is always captured —
-//! never inherited — so tool output cannot interleave with smctl's
-//! own stdout and corrupt the piped-JSON contract.
+//! Every shell-out verifier now has a deep runner: TLA+ and SPIN
+//! drive [`walk_sources`] with their own per-source closures
+//! (`tla.rs`, `spin.rs`); the Lean runner keeps its own walk because
+//! one loose-tree root expands to many per-file rows (`lean.rs`).
+//! [`run_against_sources`] remains as the generic exit-code engine
+//! for future wrappers and the unit tests below. Child stdout/stderr
+//! is always captured — never inherited — so tool output cannot
+//! interleave with smctl's own stdout and corrupt the piped-JSON
+//! contract.
 
 use std::path::Path;
 use std::process::Command;

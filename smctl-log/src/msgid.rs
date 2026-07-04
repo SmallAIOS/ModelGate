@@ -1,8 +1,11 @@
 //! MSGID catalog for smctl-logging-v1.
 //!
-//! The canonical catalog lives at
-//! `openspec/changes/smctl-logging-v1/specs/logging.md`. This enum MUST
-//! stay in sync with that table. MSGIDs are immutable once published.
+//! The founding catalog lives at
+//! `openspec/changes/archive/2026-04-24-smctl-logging-v1/specs/logging.md`
+//! (immutable once archived); later ranges carry their per-code rows
+//! in their capability specs (e.g. `openspec/specs/smctl-verify/spec.md`
+//! for `SMCTL-05xx`). This enum MUST stay in sync with those tables.
+//! MSGIDs are immutable once published.
 
 use std::fmt;
 
@@ -11,7 +14,7 @@ use crate::severity::Severity;
 /// Canonical MSGID catalog. Zero-padded four-digit form with the
 /// `SMCTL-` prefix is produced by the `Display` impl.
 ///
-/// Range allocations (see `smctl-logging-v1/specs/logging.md`):
+/// Range allocations (see the archived `smctl-logging-v1` logging.md):
 ///
 /// - `SMCTL-0001` .. `SMCTL-0099` — smctl core (workspace, spec, flow, build)
 /// - `SMCTL-0200` .. `SMCTL-0299` — smctl-mcp (see `smctl-mcp-v1/specs/mcp-server-impl.md`)
@@ -55,6 +58,7 @@ pub enum MsgId {
     VerifierMissing,
     VerifyCounterExample,
     VerifyOutputUnparsed,
+    ProofIncomplete,
 
     // smctl-quality (0400..0499)
     QualityCheckStarted,
@@ -99,6 +103,7 @@ impl MsgId {
             MsgId::VerifierMissing => 504,
             MsgId::VerifyCounterExample => 505,
             MsgId::VerifyOutputUnparsed => 506,
+            MsgId::ProofIncomplete => 507,
             MsgId::QualityCheckStarted => 400,
             MsgId::QualityCheckCompleted => 401,
             MsgId::QualityCheckFailed => 402,
@@ -125,7 +130,8 @@ impl MsgId {
             | MsgId::DsmCycleDetected
             | MsgId::DependencyVulnerability
             | MsgId::VerifyFailed
-            | MsgId::VerifyCounterExample => Severity::Error,
+            | MsgId::VerifyCounterExample
+            | MsgId::ProofIncomplete => Severity::Error,
             MsgId::McpClientDisconnected
             | MsgId::ComplexityThresholdExceeded
             | MsgId::DependencyUnused
@@ -339,9 +345,11 @@ mod tests {
         assert_eq!(MsgId::VerifierMissing.code(), 504);
         assert_eq!(MsgId::VerifyCounterExample.code(), 505);
         assert_eq!(MsgId::VerifyOutputUnparsed.code(), 506);
+        assert_eq!(MsgId::ProofIncomplete.code(), 507);
         assert_eq!(MsgId::VerifyStarted.to_string(), "SMCTL-0501");
         assert_eq!(MsgId::VerifierMissing.to_string(), "SMCTL-0504");
         assert_eq!(MsgId::VerifyCounterExample.to_string(), "SMCTL-0505");
+        assert_eq!(MsgId::ProofIncomplete.to_string(), "SMCTL-0507");
     }
 
     #[test]
@@ -364,6 +372,7 @@ mod tests {
             MsgId::VerifyOutputUnparsed.default_severity(),
             Severity::Warning
         );
+        assert_eq!(MsgId::ProofIncomplete.default_severity(), Severity::Error);
     }
 
     #[test]
@@ -375,6 +384,7 @@ mod tests {
             MsgId::VerifierMissing,
             MsgId::VerifyCounterExample,
             MsgId::VerifyOutputUnparsed,
+            MsgId::ProofIncomplete,
         ] {
             let code = id.code();
             assert!(

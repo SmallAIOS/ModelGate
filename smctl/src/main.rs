@@ -2428,12 +2428,16 @@ async fn run(cli: Cli) -> Result<i32> {
                             // install hint, mirroring the smctl
                             // quality command family.
                             // The protocol verb needs two tools (spin
-                            // plus a C compiler for pan); its helper
-                            // names whichever is actually absent.
-                            let protocol_missing = (report.verifier == "protocol")
-                                .then(smctl_verify::spin::missing_tool_for_protocol)
-                                .flatten();
-                            let (tool, install_hint) = match protocol_missing {
+                            // plus a C compiler for pan) and the proof
+                            // verb two binaries (lean for loose trees,
+                            // lake for packages); their helpers name
+                            // whichever is actually absent.
+                            let multi_tool_missing = match report.verifier.as_str() {
+                                "protocol" => smctl_verify::spin::missing_tool_for_protocol(),
+                                "proof" => smctl_verify::lean::missing_tool_for_proof(&ctx),
+                                _ => None,
+                            };
+                            let (tool, install_hint) = match multi_tool_missing {
                                 Some(pair) => pair,
                                 None => match verifier.discover() {
                                     smctl_verify::DiscoveryResult::NotInstalled {

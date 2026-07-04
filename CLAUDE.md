@@ -73,7 +73,7 @@ The production web dashboard lives in two places: the Rust server at [`modelgate
 
 ## Logging
 
-All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The canonical MSGID catalog and severity-mapping table live in `openspec/changes/smctl-logging-v1/specs/logging.md` — that document is authoritative for any new MSGID allocation, facility choice, or transport change.
+All log output conforms to RFC 5424 via the `smctl-log` crate. Callers use the `tracing` macros; the subscriber emits the wire format. The founding MSGID catalog and severity-mapping table live in `openspec/changes/archive/2026-04-24-smctl-logging-v1/specs/logging.md` (immutable once archived); per-range allocations added since then live in the owning capability spec (e.g. `openspec/specs/smctl-verify/spec.md` for `SMCTL-05xx`). New MSGIDs land in both the owning capability spec and `smctl-log/src/msgid.rs`.
 
 ## Formal verification
 
