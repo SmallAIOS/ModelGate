@@ -47,7 +47,14 @@ fn resolve_cc() -> String {
 }
 
 fn cc_available() -> bool {
-    Command::new(resolve_cc()).arg("--version").output().is_ok()
+    // Require a successful exit, not just a successful spawn: the
+    // macOS /usr/bin/cc shim without the Command Line Tools spawns
+    // fine and exits non-zero (same hazard as elan's lean/lake shims,
+    // see lean::probe).
+    Command::new(resolve_cc())
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 #[derive(Debug, Default)]

@@ -1588,7 +1588,7 @@ impl SmctlServer {
     /// Run Lean 4 proofs against `[verify.proof].roots`.
     #[tool(
         name = "smctl_verify_proof",
-        description = "Run Lean 4 proofs against [verify.proof].roots from workspace.toml. Returns a VerifyReport JSON; surfaces tool_missing when lake isn't on PATH."
+        description = "Run Lean 4 proofs against [verify.proof].roots from workspace.toml. Lake packages build with lake; loose .lean trees check per file with lean --json, and proofs containing sorry fail their row. Returns a VerifyReport JSON; surfaces tool_missing when lean/lake isn't on PATH."
     )]
     async fn verify_proof(
         &self,

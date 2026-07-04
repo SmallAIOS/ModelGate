@@ -2044,3 +2044,464 @@ exit 0"#,
         "compile step must not run after a spin generation failure"
     );
 }
+
+// --- verify proof deep runner (lean-proof-runner-v1) ----------------
+//
+// Fake `lean` / `lake` scripts (via SMCTL_VERIFY_LEAN_BIN /
+// SMCTL_VERIFY_LAKE_BIN) drive both corpus shapes hermetically: loose
+// `.lean` trees checked per file with `lean --json`, and Lake
+// packages built with `lake build`. Parser coverage lives in
+// smctl-verify/src/lean_out.rs.
+
+/// Write a `.smctl/workspace.toml` declaring one repo and a
+/// `[verify.proof]` section rooted at `proofs` inside it.
+fn write_proof_workspace(dir: &Path, repo_dir: &Path) {
+    let smctl_dir = dir.join(".smctl");
+    std::fs::create_dir_all(&smctl_dir).unwrap();
+    let manifest_text = format!(
+        r#"[workspace]
+name = "verify-ws"
+root = "."
+
+[[repos]]
+name = "repo"
+url = "file://{repo}"
+path = "{repo}"
+default_branch = "main"
+
+[verify.proof]
+roots = ["proofs"]
+fail_on = "any"
+"#,
+        repo = repo_dir.display()
+    );
+    std::fs::write(smctl_dir.join("workspace.toml"), manifest_text).unwrap();
+}
+
+/// Write an executable fake lean/lake shell script.
+fn write_fake_lean_tool(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// A loose-tree corpus: two top-level files, one nested, one decoy
+/// inside `.lake/` that must be skipped.
+fn write_loose_corpus(repo_dir: &Path) {
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(proofs.join("nested")).unwrap();
+    std::fs::create_dir_all(proofs.join(".lake")).unwrap();
+    std::fs::write(proofs.join("A.lean"), "theorem a : True := trivial\n").unwrap();
+    std::fs::write(proofs.join("B.lean"), "theorem b : True := trivial\n").unwrap();
+    std::fs::write(
+        proofs.join("nested/C.lean"),
+        "theorem c : True := trivial\n",
+    )
+    .unwrap();
+    std::fs::write(proofs.join(".lake/D.lean"), "-- build artifact decoy\n").unwrap();
+}
+
+#[test]
+fn test_verify_proof_loose_tree_passes_per_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    write_loose_corpus(&repo_dir);
+    write_proof_workspace(dir.path(), &repo_dir);
+    // Clean check: no messages, exit 0 (also serves the --version probe).
+    let lean = write_fake_lean_tool(dir.path(), "fake-lean-pass", "exit 0");
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("A.lean"))
+        .stdout(predicate::str::contains("B.lean"))
+        .stdout(predicate::str::contains("C.lean"))
+        .stdout(predicate::str::contains("\"errors\": 0"))
+        .stdout(predicate::str::contains("\"sorries\": 0"))
+        .stdout(predicate::str::contains("D.lean").not());
+}
+
+#[test]
+fn test_verify_proof_sorry_fails_row_despite_exit_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Admitted.lean"), "theorem t : True := sorry\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    // Lean ≥ 4.19 shape: hasSorry kind, warning severity, exit 0.
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-sorry",
+        r#"case "$1" in --version) echo 'Lean (version 4.19.0, arm64, commit abc, Release)'; exit 0;; esac
+cat <<'LEANEOF'
+{"severity":"warning","pos":{"line":1,"column":20},"data":"declaration uses 'sorry'","kind":"hasSorry","fileName":"Admitted.lean"}
+LEANEOF
+exit 0"#,
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("\"kind\": \"sorry\""))
+        .stdout(predicate::str::contains("\"sorries\": 1"))
+        .stdout(predicate::str::contains("proof admitted via sorry"))
+        .stdout(predicate::str::contains("Admitted.lean:1:20"));
+}
+
+#[test]
+fn test_verify_proof_kindless_sorry_still_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Old.lean"), "theorem t : True := sorry\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    // Pre-4.15 toolchains emit no `kind` field.
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-old",
+        r#"case "$1" in --version) echo 'Lean (version 4.14.0, arm64, commit abc, Release)'; exit 0;; esac
+cat <<'LEANEOF'
+{"severity":"warning","pos":{"line":1,"column":20},"data":"declaration uses 'sorry'","fileName":"Old.lean"}
+LEANEOF
+exit 0"#,
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"kind\": \"sorry\""));
+}
+
+#[test]
+fn test_verify_proof_error_reports_location_and_excerpt() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Bad.lean"), "theorem t : False := by grind\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-error",
+        r#"case "$1" in --version) echo 'Lean (version 4.22.0, arm64, commit abc, Release)'; exit 0;; esac
+cat <<'LEANEOF'
+{"severity":"error","pos":{"line":1,"column":24},"data":"`grind` failed\ncase grind\n⊢ False","kind":"[anonymous]","fileName":"Bad.lean"}
+LEANEOF
+exit 1"#,
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("\"kind\": \"error\""))
+        .stdout(predicate::str::contains("\"errors\": 1"))
+        .stdout(predicate::str::contains("Bad.lean:1:24"));
+}
+
+#[test]
+fn test_verify_proof_unparsed_failure_falls_back_to_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Env.lean"), "-- fine source, broken env\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-garbage",
+        r#"case "$1" in --version) echo 'Lean (version 4.19.0, arm64, commit abc, Release)'; exit 0;; esac
+echo "segfault deep in the elaborator" >&2
+exit 3"#,
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("\"kind\": \"build\""))
+        .stdout(predicate::str::contains("exited with 3"))
+        .stdout(predicate::str::contains("segfault deep in the elaborator"));
+}
+
+#[test]
+fn test_verify_proof_lake_package_builds_in_package_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("lakefile.toml"), "name = \"proofs\"\n").unwrap();
+    std::fs::write(proofs.join("Main.lean"), "theorem t : True := trivial\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let marker = dir.path().join("lake-calls.txt");
+    let lake = write_fake_lean_tool(
+        dir.path(),
+        "fake-lake",
+        &format!(
+            r#"pwd >> {marker}
+echo "$@" >> {marker}
+case "$1" in --version) echo 'Lake version 5.0.0-src+abc (Lean version 4.19.0)'; exit 0;; esac
+cat <<'LAKEEOF'
+✔ [1/1] Built Proofs.Main
+Build completed successfully (1 jobs).
+LAKEEOF
+exit 0"#,
+            marker = marker.display()
+        ),
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LAKE_BIN", &lake)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"outcome\": \"passed\""))
+        .stdout(predicate::str::contains("proofs"));
+
+    let calls = std::fs::read_to_string(&marker).unwrap();
+    let canonical_proofs = proofs.canonicalize().unwrap().display().to_string();
+    assert!(
+        calls.contains(&canonical_proofs) || calls.contains(&proofs.display().to_string()),
+        "lake must run inside the package dir:\n{calls}"
+    );
+    assert!(calls.lines().any(|l| l.trim() == "build"), "{calls}");
+}
+
+#[test]
+fn test_verify_proof_lake_failure_replays_compiler_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("lakefile.lean"), "import Lake\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lake = write_fake_lean_tool(
+        dir.path(),
+        "fake-lake-fail",
+        r#"case "$1" in --version) echo 'Lake version 5.0.0 (Lean version 4.19.0)'; exit 0;; esac
+cat <<'LAKEEOF'
+✖ [1/1] Building Proofs.Bad
+error: Proofs/Bad.lean:12:4: unknown identifier 'foo'
+Some required targets logged failures:
+- Proofs.Bad
+LAKEEOF
+echo 'error: build failed' >&2
+exit 1"#,
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LAKE_BIN", &lake)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("\"kind\": \"error\""))
+        .stdout(predicate::str::contains("Proofs/Bad.lean:12:4"));
+}
+
+#[test]
+fn test_verify_proof_broken_shim_reports_tool_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    write_loose_corpus(&repo_dir);
+    write_proof_workspace(dir.path(), &repo_dir);
+    // An elan shim with no configured toolchain: spawns, exits 1.
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-shim",
+        "echo 'error: no default toolchain configured' >&2\nexit 1",
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success() // tool_missing exits 0 without --strict
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\""))
+        .stdout(predicate::str::contains("\"tool\": \"lean\""))
+        .stdout(predicate::str::contains("elan"));
+}
+
+#[test]
+fn test_verify_discover_reports_broken_lean_shim_as_not_installed() {
+    let dir = tempfile::tempdir().unwrap();
+    smctl()
+        .args(["workspace", "init", "--name", "verify-ws", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-shim",
+        "echo 'error: no default toolchain configured' >&2\nexit 1",
+    );
+
+    let output = smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "discover", "--json", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_str(&String::from_utf8(output).unwrap())
+        .expect("discover --json must stay valid JSON");
+    let proof = parsed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e.get("verifier").and_then(|v| v.as_str()) == Some("proof"))
+        .expect("proof row present");
+    assert_eq!(
+        proof.pointer("/discovery/kind").and_then(|v| v.as_str()),
+        Some("not_installed"),
+        "broken shim must not be treated as installed: {proof}"
+    );
+}
+
+#[test]
+fn test_verify_proof_records_cwd_and_json_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Only.lean"), "theorem t : True := trivial\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let marker = dir.path().join("lean-calls.txt");
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-capture",
+        &format!(
+            "pwd >> {m}\necho \"$@\" >> {m}\nexit 0",
+            m = marker.display()
+        ),
+    );
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let calls = std::fs::read_to_string(&marker).unwrap();
+    // Last two lines are the real run (earlier ones are --version probes).
+    assert!(calls.contains("--json"), "{calls}");
+    assert!(calls.contains("Only.lean"), "{calls}");
+    let canonical_proofs = proofs.canonicalize().unwrap().display().to_string();
+    assert!(
+        calls.contains(&canonical_proofs) || calls.contains(&proofs.display().to_string()),
+        "lean must run with cwd = loose root:\n{calls}"
+    );
+}
+
+#[test]
+fn test_verify_proof_piped_output_is_pure_json_despite_noisy_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Noisy.lean"), "theorem t : True := trivial\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(
+        dir.path(),
+        "fake-lean-noisy",
+        r#"case "$1" in --version) echo 'Lean (version 4.19.0, arm64, commit abc, Release)'; exit 0;; esac
+echo "info: downloading component 'lean'" >&2
+echo "some stray non-JSON progress line"
+cat <<'LEANEOF'
+{"severity":"error","pos":{"line":1,"column":0},"data":"unknown identifier 'foo'","fileName":"Noisy.lean"}
+LEANEOF
+exit 1"#,
+    );
+
+    let output = smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let body = String::from_utf8(output).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|e| panic!("stdout must be one JSON document: {e}\n{body}"));
+    assert_eq!(
+        parsed.pointer("/outcome").and_then(|v| v.as_str()),
+        Some("failed")
+    );
+}
+
+#[test]
+fn test_verify_proof_mixed_corpus_fails_unverifiable_rows_when_lake_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("Loose.lean"), "theorem t : True := trivial\n").unwrap();
+    std::fs::create_dir(proofs.join("pkg")).unwrap();
+    std::fs::write(proofs.join("pkg/lakefile.toml"), "name = \"pkg\"\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(dir.path(), "fake-lean-mixed", "exit 0");
+
+    // lean present, lake absent: the loose proof must still be
+    // checked; the package row fails naming lake — never a silent
+    // whole-run tool_missing skip.
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .env("SMCTL_VERIFY_LAKE_BIN", "/nonexistent/smctl-fake-lake")
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("Loose.lean"))
+        .stdout(predicate::str::contains("lake is not installed, so"))
+        .stdout(predicate::str::contains("\"error\": \"tool_missing\"").not());
+}
+
+#[test]
+fn test_verify_proof_empty_root_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    let proofs = repo_dir.join("proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(proofs.join("README.md"), "corpus moved\n").unwrap();
+    write_proof_workspace(dir.path(), &repo_dir);
+    let lean = write_fake_lean_tool(dir.path(), "fake-lean-empty", "exit 0");
+
+    smctl()
+        .env("SMCTL_VERIFY_LEAN_BIN", &lean)
+        .args(["verify", "proof", "-w"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("\"outcome\": \"failed\""))
+        .stdout(predicate::str::contains("no .lean sources found"));
+}

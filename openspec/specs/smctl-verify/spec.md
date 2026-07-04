@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`smctl verify` exposes the formal-verification surface: Cedar policy checks run in-process end-to-end; TLA+ model checking runs TLC with deep output parsing (statistics, violations, counter-example traces); Lean 4 proof and SPIN/Promela protocol runs remain exit-code wrappers pending their follow-up changes. Source roots come from `[verify.<domain>]` in `workspace.toml`; MSGIDs live in the reserved `SMCTL-0500..0599` range.
+`smctl verify` exposes the formal-verification surface: Cedar policy checks run in-process end-to-end; TLA+ model checking runs TLC with deep output parsing (statistics, violations, counter-example traces); SPIN/Promela protocol verification runs the full spin → cc → pan pipeline with trail replay; Lean 4 proof checking classifies each root as a Lake package (`lake build`) or a loose `.lean` tree (`lean --json` per file) and fails proofs that contain `sorry`. Source roots come from `[verify.<domain>]` in `workspace.toml`; MSGIDs live in the reserved `SMCTL-0500..0599` range.
 
 ## Requirements
 ### Requirement: Verify command tree

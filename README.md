@@ -172,7 +172,7 @@ specs = ["formal/tla/*.tla"]               # TLA+ specs (`tlc` runner)
 fail_on = "any"
 
 [verify.proof]
-roots = ["formal/lean"]                    # Lean 4 project roots (`lake build`)
+roots = ["formal/lean"]                    # Lean 4 roots (Lake packages or loose .lean trees)
 fail_on = "any"
 
 [verify.protocol]
@@ -253,11 +253,11 @@ Resolution rules for single-spec verbs (`validate`, `apply`, `archive`, `status`
 |---|---|---|
 | `verify policy` | [Cedar](https://www.cedarpolicy.com) (Rust SDK, end-to-end) | Authorization policies (RBAC / ABAC / MAC) |
 | `verify model` | TLA+ (`tlc`, shell-out) | Behavioural / temporal properties |
-| `verify proof` | Lean 4 (`lake build`, shell-out) | Theorem proving |
+| `verify proof` | Lean 4 (`lean --json` per file, `lake build` for packages) | Theorem proving |
 | `verify protocol` | SPIN/Promela (`spin -a`, shell-out) | Concurrent protocol verification |
 | `verify discover` | — | Lists which of the above are reachable on PATH |
 
-Each verifier reads its source roots from the matching `[verify.<domain>]` section in `workspace.toml` (see the reference above). With no section, the verifier exits 0 with `no sources configured`. Cedar runs end-to-end inside the `smctl` process; the other three are exit-code level shell-out wrappers in v1 — deep output parsing is queued for follow-up changes (`tla-plus-runner-v1`, `lean-proof-runner-v1`, `spin-protocol-runner-v1`).
+Each verifier reads its source roots from the matching `[verify.<domain>]` section in `workspace.toml` (see the reference above). With no section, the verifier exits 0 with `no sources configured`. Cedar runs end-to-end inside the `smctl` process; TLA+, Lean 4, and SPIN shell out to their tools with deep output parsing — structured per-source results, counter-example excerpts, and reproduce commands (`tla-plus-runner-v1`, `spin-protocol-runner-v1`, `lean-proof-runner-v1`). A Lean proof containing `sorry` fails its row: admitted is not proved.
 
 ```bash
 smctl verify discover                 # which verifiers are installed?

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod cedar;
 pub mod lean;
+pub mod lean_out;
 pub mod pan;
 pub mod registry;
 pub mod shell;
@@ -266,6 +267,7 @@ pub struct SourceRow {
 pub enum VerifyDetail {
     Model(ModelCheckDetail),
     Protocol(ProtocolCheckDetail),
+    Proof(ProofCheckDetail),
 }
 
 impl SourceRow {
@@ -361,6 +363,53 @@ pub enum ProtocolViolationKind {
     AcceptanceCycle,
     /// The protocol can deadlock (invalid end state).
     InvalidEndState,
+}
+
+/// Structured result of one Lean 4 proof check, parsed from `lean
+/// --json` messages or a replayed `lake build` log. Attached to
+/// [`SourceRow::detail`] by the proof verb. The three counts are
+/// required (never defaulted) so untagged deserialization cannot
+/// confuse an empty object with a proof row; their names are disjoint
+/// from the model and protocol variants by design. Sorry warnings are
+/// counted in both `warnings` (they are warning-severity messages)
+/// and `sorries`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProofCheckDetail {
+    /// Error-severity messages reported for this source.
+    pub errors: u64,
+    /// Warning-severity messages reported (includes sorry warnings).
+    pub warnings: u64,
+    /// Messages marking an incomplete proof (`hasSorry` kind or the
+    /// `declaration uses 'sorry'` warning text).
+    pub sorries: u64,
+    /// Present when the row failed: the first piece of evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<ProofFailure>,
+}
+
+/// The evidence a proof row failed on.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProofFailure {
+    /// Which class of failure.
+    pub kind: ProofFailureKind,
+    /// `file:line:col` of the failing message when the tool reported
+    /// a position (lake/toolchain-level failures don't).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// First line of the failing message.
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofFailureKind {
+    /// An error-severity message (failed tactic, type error, …).
+    Error,
+    /// The proof is admitted: a `sorry` marker was detected.
+    Sorry,
+    /// The tool failed without a parseable message (lakefile error,
+    /// missing import, toolchain fault).
+    Build,
 }
 
 impl VerifyReport {
@@ -470,6 +519,31 @@ mod tests {
             }
             other => panic!("wrong variant: {other:?}"),
         }
+
+        // Proof rows: required counts keep the variant unambiguous.
+        let proof = VerifyDetail::Proof(ProofCheckDetail {
+            errors: 0,
+            warnings: 1,
+            sorries: 1,
+            failure: Some(ProofFailure {
+                kind: ProofFailureKind::Sorry,
+                location: Some("CapabilityNonForgery.lean:144:2".into()),
+                message: "declaration uses 'sorry'".into(),
+            }),
+        });
+        let s = serde_json::to_string(&proof).unwrap();
+        assert!(s.contains("\"sorries\":1"), "{s}");
+        assert!(s.contains("\"kind\":\"sorry\""), "{s}");
+        match serde_json::from_str::<VerifyDetail>(&s).unwrap() {
+            VerifyDetail::Proof(p) => {
+                assert_eq!(p.failure.unwrap().kind, ProofFailureKind::Sorry)
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+
+        // An empty object must not deserialize into any variant —
+        // every variant has required fields.
+        assert!(serde_json::from_str::<VerifyDetail>("{}").is_err());
     }
 
     #[test]
