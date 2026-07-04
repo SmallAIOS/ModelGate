@@ -45,4 +45,4 @@
 
 - [ ] 7.1 `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo fmt -- --check` all green
 - [x] 7.2 `openspec validate lean-proof-runner-v1 --type change --strict` passes
-- [ ] 7.3 Live-corpus smoke run: install elan (or use an existing toolchain), point a scratch workspace.toml at the kernel's `formal/lean4/` copy, confirm the live sorry in CapabilityNonForgery.lean fails its row with kind `sorry`
+- [x] 7.3 Live-corpus smoke run: install elan (or use an existing toolchain), point a scratch workspace.toml at the kernel's `formal/lean4/` copy, confirm the live sorry in CapabilityNonForgery.lean fails its row with kind `sorry`
